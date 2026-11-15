@@ -86,6 +86,8 @@ class HorizonModel(
     val metrics: Map<String, Double>,
     /** Reliability table: [mean predicted p, realised up-rate, n]. */
     val calibration: List<DoubleArray>,
+    /** "up" = P(price higher after [days]); "beat" = P(return beats the S&P 500 over [days]). */
+    val target: String = "up",
 ) {
     val needsFeatures: Boolean get() = kind != "rules"
 
@@ -131,7 +133,7 @@ class HorizonModel(
     }
 
     fun toMap(): Map<String, Any?> = linkedMapOf(
-        "days" to days, "kind" to kind, "featureNames" to featureNames, "mean" to mean.toList(), "std" to std.toList(),
+        "days" to days, "target" to target, "kind" to kind, "featureNames" to featureNames, "mean" to mean.toList(), "std" to std.toList(),
         "coef" to coef.toList(), "intercept" to intercept, "baseScore" to baseScore, "trees" to trees.map { it.toMap() },
         "calX" to calX.toList(), "calY" to calY.toList(), "baseRate" to baseRate,
         "thresholds" to linkedMapOf("strong" to thresholds.strong, "buy" to thresholds.buy, "weak" to thresholds.weak,
@@ -162,6 +164,7 @@ class HorizonModel(
                 stats = m["stats"].obj().mapValues { (_, v) -> val o = v.obj(); LabelStat(o["n"].num()!!.toInt(), o["upRate"].num()!!, o["meanRetPct"].num() ?: 0.0, o["excessPct"].num() ?: 0.0) },
                 metrics = m["metrics"].obj().mapValues { it.value.num() ?: Double.NaN },
                 calibration = m["calibration"].list().map { it.doubles() },
+                target = m["target"].str() ?: "up",
             )
         }
     }
@@ -177,7 +180,7 @@ class ModelBundle(
     val horizons: List<HorizonModel>,
     val notes: String = "",
 ) {
-    fun horizon(days: Int) = horizons.firstOrNull { it.days == days }
+    fun horizon(days: Int, target: String = "up") = horizons.firstOrNull { it.days == days && it.target == target }
 
     /** A bundle only applies if it was trained on exactly this engine's features. */
     val compatible: Boolean get() = horizons.isNotEmpty() && horizons.all { h ->

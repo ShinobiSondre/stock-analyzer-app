@@ -113,6 +113,7 @@ private fun ScanRow(c: Core, onClick: () -> Unit) {
             Spacer(Modifier.height(4.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) { chips.forEach { ToneChip(it.title, it.tone) } }
         }
+        f?.beatProbability?.let { bp -> Text("Beats S&P 500 in 2 wks: ${F.prob(bp)} (typical ${F.prob(f?.beatBase)})", color = Palette.muted, fontSize = 11.sp) }
         if (!c.isUsListing) Text("US-calibrated model — indicative for this listing", color = Palette.muted, fontSize = 10.sp)
         if (a.tyler.verdict.tone != Tone.NEUTRAL) Text("Tyler: ${a.tyler.verdict.label}", color = Palette.muted, fontSize = 11.sp)
     }

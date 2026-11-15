@@ -276,6 +276,12 @@ private fun HorizonTile(f: com.shinobisondre.stockanalyzer.engine.HorizonForecas
             ProbBar(prob, f.baseRate, f.call.tone, Modifier.padding(vertical = 4.dp))
             Text(F.edge(prob, f.baseRate) + " vs a typical stock", color = Palette.muted, fontSize = 11.sp)
         }
+        val bp = f.beatProbability
+        if (bp != null) {
+            val bb = f.beatBase ?: 0.5
+            Text("Beats S&P 500: ${F.prob(bp)} (typical ${F.prob(bb)})", fontSize = 12.sp,
+                color = if (bp >= bb + 0.01) Palette.up else if (bp <= bb - 0.01) Palette.down else Palette.muted, modifier = Modifier.padding(top = 4.dp))
+        }
         if (f.low != null && f.high != null) Text("80% range ${F.price(f.low, currency)} – ${F.price(f.high, currency)}", fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
         f.stat?.let { s ->
             if (s.n >= 100) Text("Past ${f.call.text} calls: ${(s.upRate * 100).roundToInt()}% rose (n=${"%,d".format(s.n)}, avg ${F.pct(s.meanRetPct, 1)})", color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))

@@ -18,6 +18,10 @@ data class HorizonForecast(
     val high: Double?,
     val drivers: List<Driver>,
     val targetDate: String,
+    /** Calibrated P(return beats the S&P 500 over [days]) and its base rate, when the model has that target. */
+    val beatProbability: Double? = null,
+    val beatBase: Double? = null,
+    val beatStat: LabelStat? = null,
 ) {
     val edge: Double? get() = if (probability != null && baseRate != null) probability - baseRate else null
 }
@@ -94,7 +98,11 @@ object Analyzer {
                         .take(6)
                         .map { Driver(it.name, "${it.name}: ${it.label}", it.score * it.weight / 10) }
                 }
-                HorizonForecast(days, label, p, hm.baseRate, call, hm.stats[call.name], band?.first, band?.second, drivers, target)
+                val bm = usable?.horizon(days, "beat")
+                val bp = bm?.probability(x, rules.rawScore)
+                val bStat = if (bm != null && bp != null) bm.stats[bm.call(bp).name] else null
+                HorizonForecast(days, label, p, hm.baseRate, call, hm.stats[call.name], band?.first, band?.second, drivers, target,
+                    bp, bm?.baseRate, bStat)
             } else {
                 // Rules fallback: same call for every horizon, ATR-free vol band (±1.28σ√h).
                 val band = vol?.let { v -> val w = 1.2816 * v * kotlin.math.sqrt(days.toDouble()); ind.lastClose * kotlin.math.exp(-w) to ind.lastClose * kotlin.math.exp(w) }
@@ -126,6 +134,10 @@ object Analyzer {
         }
         f.stat?.let { st ->
             if (st.n >= 200) parts += "Out of sample, ${st.n.fmtThousands()} past ${f.call.text} calls were higher after ${f.days} sessions ${(st.upRate * 100).roundToInt()}% of the time (avg ${pct(st.meanRetPct)})."
+        }
+        f.beatProbability?.let { bp ->
+            val bb = f.beatBase ?: 0.5
+            parts += "Odds of beating the S&P 500 over the same window: ${(bp * 100).roundToInt()}% (typical ${(bb * 100).roundToInt()}%)."
         }
         val up = f.drivers.filter { it.logOdds > 0 }.take(2).joinToString(", ") { it.label.lowercase() }
         val dn = f.drivers.filter { it.logOdds < 0 }.take(2).joinToString(", ") { it.label.lowercase() }
