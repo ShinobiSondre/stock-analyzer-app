@@ -1,6 +1,14 @@
 package com.shinobisondre.stockanalyzer.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,6 +34,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -42,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +87,7 @@ private fun Tab.icon(): ImageVector = when (this) {
     Tab.MARKETS -> Icons.Filled.Home
     Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.BoltIcon
     Tab.TYLER -> Icons.Filled.PlayArrow
+    Tab.RIPPLE -> Icons.Filled.Share
     Tab.SCANNER -> Icons.Filled.Search
     Tab.PORTFOLIO -> Icons.Filled.AccountBox
     Tab.ALERTS -> Icons.Filled.Notifications
@@ -104,6 +115,9 @@ fun AppRoot(vm: MainViewModel, fold: FoldInfo) {
             else -> CompactLayout(vm, tab, selected, unread, fold, w)
         }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(bottom = 72.dp))
+        // Short animated intro on a fresh start (not when folding/unfolding or coming back).
+        var intro by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
+        if (intro) IntroSplash { intro = false }
     }
 }
 
@@ -128,14 +142,33 @@ private fun CompactLayout(vm: MainViewModel, tab: Tab, selected: String?, unread
         },
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-            if (watching != null) {
-                com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, watching, showClose = true)
-            } else if (selected != null) {
-                BackHandler { vm.close() }
-                AnalysisScreen(vm, selected, showBack = true, tabletopTop = tabletopTop(fold))
-            } else {
-                BackHandler(enabled = tab != Tab.MARKETS) { vm.tab.value = Tab.MARKETS }
-                TabContent(vm, tab, twoPane = false)
+            // Screens slide: a stock or video slides in from the right over the tab it came from.
+            val screen = when { watching != null -> "v:$watching"; selected != null -> "s:$selected"; else -> "t:${tab.name}" }
+            AnimatedContent(
+                targetState = screen,
+                transitionSpec = {
+                    val deeper = !targetState.startsWith("t:") && initialState.startsWith("t:")
+                    val back = targetState.startsWith("t:") && !initialState.startsWith("t:")
+                    when {
+                        deeper -> (slideInHorizontally(tween(320)) { it / 3 } + fadeIn(tween(260))) togetherWith fadeOut(tween(180))
+                        back -> fadeIn(tween(260)) togetherWith (slideOutHorizontally(tween(280)) { it / 3 } + fadeOut(tween(200)))
+                        else -> (fadeIn(tween(260)) + slideInVertically(tween(300)) { it / 30 }) togetherWith fadeOut(tween(140))
+                    }
+                },
+                label = "screen",
+            ) { key ->
+                when {
+                    key.startsWith("v:") -> com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, key.removePrefix("v:"), showClose = true)
+                    key.startsWith("s:") -> {
+                        BackHandler { vm.close() }
+                        AnalysisScreen(vm, key.removePrefix("s:"), showBack = true, tabletopTop = tabletopTop(fold))
+                    }
+                    else -> {
+                        val t = Tab.valueOf(key.removePrefix("t:"))
+                        BackHandler(enabled = t != Tab.MARKETS) { vm.tab.value = Tab.MARKETS }
+                        TabContent(vm, t, twoPane = false)
+                    }
+                }
             }
         }
     }
@@ -175,17 +208,26 @@ private fun WideLayout(vm: MainViewModel, tab: Tab, selected: String?, unread: I
                     Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { TabContent(vm, tab, twoPane = true) }
                 }
             } else {
-                Box(Modifier.width(listWidth).fillMaxHeight()) { TabContent(vm, tab, twoPane = true) }
+                Box(Modifier.width(listWidth).fillMaxHeight()) {
+                    AnimatedContent(tab, transitionSpec = { (fadeIn(tween(260)) + slideInVertically(tween(300)) { it / 30 }) togetherWith fadeOut(tween(140)) }, label = "tab") { t ->
+                        TabContent(vm, t, twoPane = true)
+                    }
+                }
                 if (gap > 0.dp) Spacer(Modifier.width(gap).fillMaxHeight()) else Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.outline))
                 Box(Modifier.weight(1f).fillMaxHeight()) {
-                    if (watching != null) {
-                        com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, watching, showClose = true)
-                    } else if (selected != null) {
-                        BackHandler { vm.close() }
-                        AnalysisScreen(vm, selected, showBack = false, tabletopTop = tabletopTop(fold))
-                    } else {
-                        Column(Modifier.fillMaxSize(), verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
-                            EmptyState("Pick a stock", "Tap any symbol on the left — the full analysis opens here. Unfolded, the list and the analysis sit side by side.")
+                    val pane = when { watching != null -> "v:$watching"; selected != null -> "s:$selected"; else -> "none" }
+                    AnimatedContent(pane, transitionSpec = {
+                        (fadeIn(tween(280)) + slideInHorizontally(tween(320)) { it / 12 }) togetherWith fadeOut(tween(160))
+                    }, label = "pane") { key ->
+                        when {
+                            key.startsWith("v:") -> com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, key.removePrefix("v:"), showClose = true)
+                            key.startsWith("s:") -> {
+                                BackHandler { vm.close() }
+                                AnalysisScreen(vm, key.removePrefix("s:"), showBack = false, tabletopTop = tabletopTop(fold))
+                            }
+                            else -> Column(Modifier.fillMaxSize(), verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
+                                EmptyState("Pick a stock", "Tap any symbol on the left — the full analysis opens here. Unfolded, the list and the analysis sit side by side.")
+                            }
                         }
                     }
                 }
@@ -213,6 +255,7 @@ fun TabContent(vm: MainViewModel, tab: Tab, twoPane: Boolean) {
     when (tab) {
         Tab.MARKETS -> MarketsScreen(vm)
         Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.QuickWinsScreen(vm)
+        Tab.RIPPLE -> com.shinobisondre.stockanalyzer.ui.screens.RippleScreen(vm)
         Tab.TYLER -> com.shinobisondre.stockanalyzer.ui.screens.TylerScreen(vm)
         Tab.SCANNER -> ScannerScreen(vm)
         Tab.PORTFOLIO -> PortfolioScreen(vm, twoPane)

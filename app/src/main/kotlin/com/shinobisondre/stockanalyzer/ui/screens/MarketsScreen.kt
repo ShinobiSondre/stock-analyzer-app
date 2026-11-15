@@ -46,6 +46,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -70,6 +72,7 @@ import com.shinobisondre.stockanalyzer.ui.SectionCard
 import com.shinobisondre.stockanalyzer.ui.Sparkline
 import com.shinobisondre.stockanalyzer.ui.ToneChip
 import com.shinobisondre.stockanalyzer.ui.regimeTone
+import com.shinobisondre.stockanalyzer.ui.appear
 import com.shinobisondre.stockanalyzer.ui.theme.Palette
 import com.shinobisondre.stockanalyzer.ui.theme.changeColor
 
@@ -102,7 +105,7 @@ fun MarketsScreen(vm: MainViewModel) {
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
-            ScreenHeader("Markets", "Odds-based analysis for your watchlist") {
+            ScreenHeader("Home", "Your stocks and the market, in plain words") {
                 IconButton(onClick = { vm.refreshAll() }) { Icon(Icons.Filled.Refresh, "Refresh") }
                 val unread = st.alerts.count { !it.read }
                 IconButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.ALERTS }) {
@@ -114,6 +117,7 @@ fun MarketsScreen(vm: MainViewModel) {
             }
         }
         if (up.available != null) item { UpdateBanner(vm, up, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
+        item(key = "today") { TodayCard(vm, movers, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).appear(0)) }
         if (movers.isNotEmpty()) item {
             QuickWinBanner(movers, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }
         }
@@ -150,7 +154,15 @@ fun MarketsScreen(vm: MainViewModel) {
             }
             item { HorizontalDivider(Modifier.padding(vertical = 6.dp), color = Palette.outline) }
         }
-        item { MarketCard(market, Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { vm.refreshMarket(true) } }
+        item { MarketCard(market, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(1)) { vm.refreshMarket(true) } }
+        item(key = "ideas") {
+            SectionCard("Find new ideas", Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(2), subtitle = "Two ways to look for your next stock") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.OutlinedButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.SCANNER }, modifier = Modifier.weight(1f)) { Text("Best odds now") }
+                    androidx.compose.material3.OutlinedButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.RIPPLE }, modifier = Modifier.weight(1f)) { Text("What moves together") }
+                }
+            }
+        }
         item {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Watchlist", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -215,6 +227,63 @@ fun MarketsScreen(vm: MainViewModel) {
             confirmButton = { TextButton(onClick = { vm.addSymbolsToWatchlist(text); addOpen = false }) { Text("Add") } },
             dismissButton = { TextButton(onClick = { addOpen = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/** A 30-second briefing in plain words, built from what's already loaded. Each line jumps to the detail. */
+@Composable
+fun TodayCard(vm: MainViewModel, movers: List<com.shinobisondre.stockanalyzer.data.QuickWin>, modifier: Modifier = Modifier) {
+    val st by vm.state.collectAsStateWithLifecycle()
+    val market by vm.market.collectAsStateWithLifecycle()
+    val cores by vm.cores.collectAsStateWithLifecycle()
+    val pf by vm.portfolio.collectAsStateWithLifecycle()
+    val tyler by vm.tyler.collectAsStateWithLifecycle()
+    LaunchedEffect(st.holdings.size) { if (st.holdings.isNotEmpty()) vm.loadPortfolio() }
+    data class Line(val text: String, val tone: Tone, val onClick: (() -> Unit)?)
+    val lines = buildList {
+        (market as? Load.Ok)?.v?.point?.let { p ->
+            add(Line(when (p.regime.name) {
+                "BULL" -> "The overall market is in an uptrend — a good backdrop for most stocks."
+                "BEAR" -> "The overall market is in a downtrend — most stocks struggle in these periods, so go slowly."
+                "HIGH_VOL" -> "The market is jumpy right now — expect bigger swings than usual."
+                "CAUTION" -> "The market is mixed — not clearly up or down."
+                else -> "Market trend unclear today."
+            }, regimeTone(p.regime.name), null))
+            if (p.fearTier == FearTier.HIGH) add(Line("Investors are scared (VIX ${F.num(p.vix, 0)}). In the past, slowly buying good companies at times like this has paid off.", Tone.BUY, null))
+        }
+        (pf as? Load.Ok)?.v?.let { v ->
+            val d = v.totals.dayChangeBase
+            add(Line("Your portfolio is ${if (d >= 0) "up" else "down"} ${F.money(kotlin.math.abs(d), v.base)} today (${F.pct(v.totals.dayChangePct)}).",
+                if (d >= 0) Tone.BUY else Tone.SELL) { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.PORTFOLIO })
+        }
+        val mine = st.holdings.mapNotNull { h -> (cores[h.symbol] as? Load.Ok)?.v?.let { h.symbol to it } }
+        mine.filter { it.second.changePct != null }.maxByOrNull { it.second.changePct!! }?.takeIf { (it.second.changePct ?: 0.0) > 0.5 }?.let { (sym, c) ->
+            add(Line("Best of yours today: $sym ${F.pct(c.changePct, 1)}.", Tone.BUY) { vm.open(sym) })
+        }
+        mine.filter { it.second.changePct != null }.minByOrNull { it.second.changePct!! }?.takeIf { (it.second.changePct ?: 0.0) < -0.5 }?.let { (sym, c) ->
+            add(Line("Worst of yours today: $sym ${F.pct(c.changePct, 1)}.", Tone.SELL) { vm.open(sym) })
+        }
+        movers.firstOrNull()?.let { w -> add(Line("${w.symbol} jumped ${F.pct(w.changePct, 1)} — ${plainCall(w).action.replaceFirstChar { it.lowercase() }}.", plainCall(w).tone) { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }) }
+        mine.filter { it.second.analysis.verdict.call.bearish }.take(2).forEach { (sym, c) ->
+            add(Line("Heads-up: the odds look weak for $sym over the next 2 weeks (${c.p10?.let { F.prob(it) } ?: c.analysis.verdict.call.text}).", Tone.SELL) { vm.open(sym) })
+        }
+        tyler.ordered.firstOrNull { it.aiMade }?.let { tk ->
+            add(Line("Tyler Hill (${ytDate(tk.published).substringBefore(" ·")}): ${tk.headline}", tk.tone) { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.TYLER })
+        }
+    }
+    if (lines.isEmpty()) return
+    SectionCard("Today for you", modifier) {
+        lines.forEachIndexed { i, l ->
+            Row(
+                Modifier.fillMaxWidth().then(if (l.onClick != null) Modifier.clickable(onClick = l.onClick) else Modifier).padding(vertical = 5.dp).appear(i),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Box(Modifier.padding(top = 6.dp).size(8.dp).clip(RoundedCornerShape(50)).background(com.shinobisondre.stockanalyzer.ui.theme.toneColor(l.tone)))
+                Spacer(Modifier.width(10.dp))
+                Text(l.text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                if (l.onClick != null) Text("›", color = Palette.muted, fontSize = 18.sp, modifier = Modifier.padding(start = 6.dp))
+            }
+        }
     }
 }
 

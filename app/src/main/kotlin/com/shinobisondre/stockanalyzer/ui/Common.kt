@@ -1,6 +1,11 @@
 package com.shinobisondre.stockanalyzer.ui
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +29,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,11 +117,15 @@ fun SectionCard(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    help: String? = null,
     action: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Every card with jargon gets a "?" that explains it in plain words.
+    val explain = help ?: Glossary.cards[title]
+    var showHelp by remember { mutableStateOf(false) }
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().animateContentSize(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Palette.surface),
     ) {
@@ -122,12 +135,22 @@ fun SectionCard(
                     Text(title, style = MaterialTheme.typography.titleMedium)
                     if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Palette.muted)
                 }
+                if (explain != null) Box(
+                    Modifier.padding(start = 6.dp).size(26.dp).clip(RoundedCornerShape(50)).background(Palette.surface2).clickable { showHelp = true },
+                    contentAlignment = Alignment.Center,
+                ) { Text("?", color = Palette.accent, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
                 if (action != null) action()
             }
             Spacer(Modifier.height(10.dp))
             content()
         }
     }
+    if (showHelp && explain != null) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { showHelp = false },
+        title = { Text(title) },
+        text = { Text(explain, fontSize = 15.sp) },
+        confirmButton = { TextButton(onClick = { showHelp = false }) { Text("Got it") } },
+    )
 }
 
 @Composable
@@ -176,8 +199,11 @@ fun KeyValue(key: String, value: String, valueColor: Color = Palette.text, modif
 /** Horizontal bar: probability [p] with a tick at the base rate. */
 @Composable
 fun ProbBar(p: Double, base: Double?, tone: Tone, modifier: Modifier = Modifier, height: Dp = 8.dp) {
+    var target by remember { mutableStateOf(0f) }
+    androidx.compose.runtime.LaunchedEffect(p) { target = p.toFloat().coerceIn(0f, 1f) }
+    val fill by animateFloatAsState(target, tween(900, easing = androidx.compose.animation.core.FastOutSlowInEasing), label = "prob")
     Box(modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(50)).background(Palette.surface2)) {
-        Box(Modifier.fillMaxHeight().fillMaxWidth(p.toFloat().coerceIn(0f, 1f)).clip(RoundedCornerShape(50)).background(toneColor(tone)))
+        Box(Modifier.fillMaxHeight().fillMaxWidth(fill.coerceIn(0.001f, 1f)).clip(RoundedCornerShape(50)).background(toneColor(tone)))
         if (base != null) {
             Row(Modifier.fillMaxSize()) {
                 Spacer(Modifier.fillMaxHeight().weight(base.toFloat().coerceIn(0.01f, 0.99f)))

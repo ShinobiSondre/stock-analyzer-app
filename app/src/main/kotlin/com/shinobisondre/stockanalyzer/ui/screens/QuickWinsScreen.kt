@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.materialIcon
@@ -33,6 +34,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +53,8 @@ import com.shinobisondre.stockanalyzer.ui.F
 import com.shinobisondre.stockanalyzer.ui.MainViewModel
 import com.shinobisondre.stockanalyzer.ui.SectionCard
 import com.shinobisondre.stockanalyzer.ui.Sparkline
+import com.shinobisondre.stockanalyzer.ui.appear
+import com.shinobisondre.stockanalyzer.ui.pulse
 import com.shinobisondre.stockanalyzer.ui.theme.Palette
 import com.shinobisondre.stockanalyzer.ui.theme.toneColor
 
@@ -94,9 +99,33 @@ fun QuickWinsScreen(vm: MainViewModel) {
                 "Quick wins lists stocks that are up at least ${q.minMove.toInt()}% today" + (if (q.includeMarket) " among your holdings, watchlist, Yahoo's top gainers and ~150 large US and Oslo names." else " among your holdings and watchlist.") +
                     " Check back while the market is open (Oslo 09:00–16:20, New York 15:30–22:00 Norwegian time).")
         }
-        items(q.items, key = { "qw-" + it.symbol }) { w ->
-            val held = st.holdings.firstOrNull { it.symbol == w.symbol }
-            QuickWinCard(w, held?.shares, Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { vm.open(w.symbol) }
+        // Three clear groups: what you own (sell or keep?), what's worth buying, and what isn't.
+        if (q.items.isNotEmpty()) {
+            val mine = q.items.filter { it.owned }
+            val others = q.items.filter { !it.owned }
+            val buys = others.filter { plainCall(it).tone == Tone.BUY }
+            val skips = others.filter { plainCall(it).tone != Tone.BUY }
+            if (mine.isNotEmpty()) {
+                item(key = "h-mine") { GroupHeader("Yours — sell or keep?", "${mine.size} of your stocks jumped today", Palette.accent, Modifier.appear(0)) }
+                itemsIndexed(mine, key = { _, w -> "qw-m-" + w.symbol }) { i, w ->
+                    val held = st.holdings.firstOrNull { it.symbol == w.symbol }
+                    QuickWinCard(w, held?.shares, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(i + 1)) { vm.open(w.symbol) }
+                }
+            }
+            item(key = "h-buy") { GroupHeader("Worth buying", if (buys.isEmpty()) "Nothing right now" else "${buys.size} where jumps like this usually kept going", Palette.up, Modifier.appear(1)) }
+            if (buys.isEmpty()) item(key = "buy-none") {
+                Text("Stocks that already jumped today usually don't keep rising enough to beat the fees. Check back later — this updates as prices move.",
+                    color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+            itemsIndexed(buys, key = { _, w -> "qw-b-" + w.symbol }) { i, w ->
+                QuickWinCard(w, null, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(i + 2)) { vm.open(w.symbol) }
+            }
+            if (skips.isNotEmpty()) {
+                item(key = "h-skip") { GroupHeader("Don't buy", "${skips.size} that jumped but usually stall or slip back", Palette.down, Modifier.appear(2)) }
+                itemsIndexed(skips, key = { _, w -> "qw-s-" + w.symbol }) { i, w ->
+                    QuickWinCard(w, null, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(i + 3)) { vm.open(w.symbol) }
+                }
+            }
         }
         item {
             SectionCard("How it decides", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), action = {
@@ -165,11 +194,23 @@ fun QuickWinCard(w: QuickWin, sharesHeld: Double?, modifier: Modifier = Modifier
     }
 }
 
+@Composable
+private fun GroupHeader(title: String, sub: String, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.foundation.layout.Box(Modifier.width(4.dp).height(34.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp)).background(color))
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = color)
+            Text(sub, fontSize = 12.sp, color = Palette.muted)
+        }
+    }
+}
+
 /** One-line home-page banner for a big mover you own or watch. */
 @Composable
 fun QuickWinBanner(movers: List<QuickWin>, modifier: Modifier = Modifier, onClick: () -> Unit) {
     if (movers.isEmpty()) return
-    SectionCard("Quick win spotted", modifier.clickable(onClick = onClick), action = { Icon(BoltIcon, null, tint = Palette.warn) }) {
+    SectionCard("Quick win spotted", modifier.clickable(onClick = onClick), action = { Icon(BoltIcon, null, tint = Palette.warn, modifier = Modifier.pulse()) }) {
         movers.take(3).forEach { w ->
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(w.symbol, fontWeight = FontWeight.Bold, modifier = Modifier.width(76.dp))

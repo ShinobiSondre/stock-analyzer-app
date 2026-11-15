@@ -180,6 +180,8 @@ private fun CardsGrid(vm: MainViewModel, core: Core, extras: Load<Extras>?, call
             a.holding?.let { h -> item(key = "hold") { HoldingCard(h) } }
             if (hasTylerTake) item(key = "tylerTake") { TylerOnStock(vm, core.symbol) }
             item(key = "summary") { SummaryCard(a) }
+            item(key = "invested") { InvestedCard(core, vm.state.value.settings.baseCurrency) }
+            item(key = "ripple") { RippleCard(vm, core.symbol) }
             item(key = "fund") { FundamentalsCard(core, extras) }
             item(key = "cat") { CatalystsCard(extras) }
             item(key = "news") { NewsCard(extras) }
@@ -234,6 +236,55 @@ private fun PriceHeader(core: Core, extras: Extras?) {
             }
             Text("52-week range", color = Palette.muted, fontSize = 11.sp)
         }
+    }
+}
+
+/** "If you had put 10,000 kr in…" — how the ride has looked, in money. */
+@Composable
+private fun InvestedCard(core: Core, base: String) {
+    val cs = core.chart.candles
+    if (cs.size < 30) return
+    val last = cs.last().adjClose
+    val sym = if (base == "NOK" || base == "SEK" || base == "DKK") "kr" else base
+    val spans = listOf(21 to "1 month ago", 126 to "6 months ago", 252 to "1 year ago", 504 to "2 years ago").filter { it.first < cs.size }
+    SectionCard("If you had invested", subtitle = "10,000 $sym in ${core.symbol.removeSuffix(".OL")}") {
+        spans.forEach { (n, label) ->
+            val then = cs[cs.size - 1 - n].adjClose
+            if (then > 0) {
+                val worth = 10_000 * last / then
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    com.shinobisondre.stockanalyzer.ui.AnimatedNumber(worth, { "%,.0f $sym".format(java.util.Locale.US, it).replace(',', ' ') },
+                        style = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold),
+                        color = if (worth >= 10_000) Palette.up else Palette.down)
+                }
+            }
+        }
+        // The worst drop along the way — what holding it actually felt like.
+        val window = cs.takeLast(252).map { it.adjClose }
+        var peak = window.first(); var worst = 0.0
+        for (p in window) { peak = maxOf(peak, p); worst = minOf(worst, p / peak - 1) }
+        Text("Along the way (last year) it was at worst ${F.num(-worst * 100, 0)}% below its high — that's the ride you'd have had to sit through.",
+            fontSize = 12.sp, color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
+        Text("Ignores currency changes and fees.", fontSize = 11.sp, color = Palette.muted)
+    }
+}
+
+/** Link to the ripple tree for this stock (and its top 3 links if already measured). */
+@Composable
+private fun RippleCard(vm: MainViewModel, symbol: String) {
+    val r by vm.ripple.collectAsStateWithLifecycle()
+    val view = (r as? Load.Ok)?.v?.takeIf { it.root == symbol }
+    SectionCard("Ripple effect", subtitle = "Who tends to move when ${symbol.removeSuffix(".OL")} moves") {
+        if (view != null) {
+            view.children.filter { it.stat != null }.sortedByDescending { it.stat!!.score }.take(3).forEach { k ->
+                Row(Modifier.fillMaxWidth().clickable { vm.open(k.node.symbol) }.padding(vertical = 4.dp)) {
+                    Text(k.node.symbol.removeSuffix(".OL"), fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.width(80.dp))
+                    Text(k.stat!!.strength.label, fontSize = 13.sp, color = com.shinobisondre.stockanalyzer.ui.theme.toneColor(k.stat.strength.tone))
+                }
+            }
+        } else Text("Suppliers, customers and rivals — and how closely each one has actually moved with ${symbol.removeSuffix(".OL")}.", fontSize = 13.sp)
+        TextButton(onClick = { vm.openRipple(symbol) }) { Text("Open the ripple tree") }
     }
 }
 

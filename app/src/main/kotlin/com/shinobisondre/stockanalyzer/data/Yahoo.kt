@@ -166,6 +166,14 @@ object Yahoo {
         return hits to items
     }
 
+    /** Stocks Yahoo shows as "people also watch" for [symbol] (no crumb needed). */
+    suspend fun similar(symbol: String): List<String> {
+        val body = Http.get("https://query2.finance.yahoo.com/v6/finance/recommendationsbysymbol/${enc(symbol)}", allowError = true)
+        return runCatching {
+            MiniJson.parse(body).obj()["finance"].obj()["result"].list().firstOrNull().obj()["recommendedSymbols"].list().mapNotNull { it.obj()["symbol"].str() }
+        }.getOrDefault(emptyList())
+    }
+
     /** Yahoo's "day gainers" screener (needs the crumb). Large enough, liquid names only. */
     suspend fun dayGainers(): List<String> {
         val c = crumb() ?: return emptyList()

@@ -28,6 +28,10 @@ import com.shinobisondre.stockanalyzer.engine.QualityScore
 import com.shinobisondre.stockanalyzer.engine.Series
 import com.shinobisondre.stockanalyzer.engine.TrackRecord
 import com.shinobisondre.stockanalyzer.engine.TrackSummary
+import com.shinobisondre.stockanalyzer.engine.Link
+import com.shinobisondre.stockanalyzer.engine.Ripple
+import com.shinobisondre.stockanalyzer.engine.RippleNode
+import com.shinobisondre.stockanalyzer.engine.RippleStat
 import com.shinobisondre.stockanalyzer.engine.TylerTake
 import com.shinobisondre.stockanalyzer.engine.TylerTalk
 import com.shinobisondre.stockanalyzer.engine.YtVideo
@@ -403,6 +407,26 @@ class Repository(private val context: Context, val store: Store) {
         val detailed = top.map { q -> async { quickWin(q.symbol, q.owned, q.watched, intraday = true) ?: q } }.map { it.await() }.associateBy { it.symbol }
         firstPass.map { detailed[it.symbol] ?: it }
             .sortedWith(compareByDescending<QuickWin> { it.owned }.thenByDescending { it.watched }.thenByDescending { it.changePct })
+    }
+
+    // ── Ripple tree ──────────────────────────────────────────────────────────
+    class RippleChild(val node: RippleNode, val name: String, val stat: RippleStat?, val changePct: Double?, val price: Double?, val currency: String)
+    class RippleView(val root: String, val rootName: String, val rootChange: Double?, val rootPrice: Double?, val rootCurrency: String,
+                     val children: List<RippleChild>, val fromYahoo: Boolean, val at: Long = System.currentTimeMillis())
+
+    /** Who is connected to [root] and how closely each has actually moved with it (last ~2 years). */
+    suspend fun ripple(root: String): RippleView = coroutineScope {
+        val sym = root.trim().uppercase()
+        val mapped = Ripple.nodesFor(sym)
+        val nodes = (mapped ?: Yahoo.similar(sym).take(10).map { RippleNode(it, Link.PEERS) }).filter { it.symbol != sym }.distinctBy { it.symbol }
+        val leader = chart(sym)
+        val kids = nodes.map { n ->
+            async {
+                val c = runCatching { chart(n.symbol) }.getOrNull() ?: return@async null
+                RippleChild(n, c.meta.name, Ripple.stats(n.symbol, leader.candles, c.candles), c.changePct, c.price, c.meta.currency ?: "USD")
+            }
+        }.mapNotNull { it.await() }
+        RippleView(sym, leader.meta.name, leader.changePct, leader.price, leader.meta.currency ?: "USD", kids, fromYahoo = mapped == null)
     }
 
     // ── Tyler Hill video summaries ──────────────────────────────────────────

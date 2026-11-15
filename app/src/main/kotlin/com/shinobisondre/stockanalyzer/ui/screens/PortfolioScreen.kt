@@ -78,6 +78,7 @@ import com.shinobisondre.stockanalyzer.ui.Loading
 import com.shinobisondre.stockanalyzer.ui.MainViewModel
 import com.shinobisondre.stockanalyzer.ui.SectionCard
 import com.shinobisondre.stockanalyzer.ui.ToneChip
+import com.shinobisondre.stockanalyzer.ui.appear
 import com.shinobisondre.stockanalyzer.ui.theme.Palette
 import com.shinobisondre.stockanalyzer.ui.theme.changeColor
 
@@ -129,7 +130,7 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
             }
             when (val p = pf) {
                 is Load.Ok -> {
-                    item { TotalsCard(p.v, Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) }
+                    item { TotalsCard(p.v, Modifier.padding(horizontal = 12.dp, vertical = 8.dp).appear(0)) }
                     items(p.v.rows, key = { "h-" + it.holding.symbol }) { r ->
                         HoldingRow(r, p.v.base, onOpen = { vm.open(r.holding.symbol) }, onEdit = { editing = r.holding }, onRemove = { vm.removeHolding(r.holding.symbol) })
                         HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
@@ -216,7 +217,8 @@ private fun CandidateRow(c: ImportCandidate, onChange: ((ImportCandidate) -> Imp
 private fun TotalsCard(v: PortfolioView, modifier: Modifier) {
     val t = v.totals
     SectionCard("Total value", modifier) {
-        Text(F.money(t.valueBase, v.base), fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        com.shinobisondre.stockanalyzer.ui.AnimatedNumber(t.valueBase, { F.money(it, v.base) },
+            style = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold))
         Text("Today ${F.money(t.dayChangeBase, v.base)} (${F.pct(t.dayChangePct)})", color = changeColor(t.dayChangeBase), fontSize = 14.sp)
         Spacer(Modifier.height(8.dp))
         if (t.costedCount > 0) {

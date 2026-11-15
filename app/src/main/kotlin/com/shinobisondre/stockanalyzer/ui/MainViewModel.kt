@@ -37,9 +37,9 @@ sealed interface Load<out T> {
 fun <T> Load<T>.value(): T? = (this as? Load.Ok<T>)?.v
 
 enum class Tab(val label: String, val inBottomBar: Boolean = true) {
-    MARKETS("Markets"), QUICK("Quick wins"), SCANNER("Scanner"), PORTFOLIO("Portfolio"), TYLER("Tyler"),
-    // Behind the bell / gear on the home page on the narrow screen; in the side rail when unfolded.
-    ALERTS("Alerts", false), SETTINGS("Settings", false),
+    MARKETS("Home"), QUICK("Quick wins"), RIPPLE("Ripples"), PORTFOLIO("Portfolio"), TYLER("Tyler"),
+    // Reached from the home page on the narrow screen; in the side rail when unfolded.
+    SCANNER("Scanner", false), ALERTS("Alerts", false), SETTINGS("Settings", false),
 }
 
 data class TylerState(
@@ -139,6 +139,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var shotJob: Job? = null
     val tyler = MutableStateFlow(TylerState())
     private var tylerJob: Job? = null
+    /** Ripple tree: the stock in the middle and its loaded tree. */
+    val rippleRoot = MutableStateFlow(state.value.holdings.firstOrNull()?.symbol?.takeIf { com.shinobisondre.stockanalyzer.engine.Ripple.nodesFor(it) != null } ?: "NVDA")
+    val ripple = MutableStateFlow<Load<com.shinobisondre.stockanalyzer.data.Repository.RippleView>>(Load.Idle)
+    private var rippleJob: Job? = null
     /** Tyler video being watched in the app (null = none), and whether it fills the whole screen. */
     val watching = MutableStateFlow<String?>(null)
     val videoFull = MutableStateFlow(false)
@@ -328,6 +332,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val failed = syms.filterIndexed { i, _ -> res[i].isFailure }
             scan.update { it.copy(running = false, results = ok.sortedByDescending { c -> c.p10 ?: c.analysis.rules.rawScore / 10 }, failed = failed, at = System.currentTimeMillis()) }
         }
+    }
+
+    // ── Ripple tree ──────────────────────────────────────────────────────────
+    fun loadRipple(root: String = rippleRoot.value, force: Boolean = false) {
+        val sym = root.trim().uppercase()
+        if (sym.isEmpty()) return
+        val cur = ripple.value
+        if (!force && sym == rippleRoot.value && cur is Load.Ok && cur.v.root == sym && System.currentTimeMillis() - cur.v.at < 10 * 60_000) return
+        rippleRoot.value = sym
+        rippleJob?.cancel()
+        ripple.value = Load.Loading
+        load(sym)
+        rippleJob = viewModelScope.launch {
+            val r = runCatching { repo.ripple(sym) }
+            ripple.value = r.fold({ if (it.children.isEmpty()) Load.Err("No connected stocks found for $sym.") else Load.Ok(it) }, { e -> Load.Err(e.message ?: "Couldn't load $sym") })
+        }
+    }
+
+    /** From a stock page or a tree node: make [symbol] the middle of the ripple tree. */
+    fun openRipple(symbol: String) {
+        selected.value = null; watching.value = null
+        tab.value = Tab.RIPPLE
+        loadRipple(symbol)
     }
 
     // ── Tyler Hill ───────────────────────────────────────────────────────────

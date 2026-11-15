@@ -34,6 +34,7 @@ object EngineSelfTest {
         brokerScreenshots()
         dayAfter()
         tyler()
+        ripple()
         println("EngineSelfTest: $passed checks passed, ${failures.size} failed")
         failures.forEach { println("  FAIL $it") }
         return failures.toList()
@@ -384,6 +385,32 @@ object EngineSelfTest {
         val q = TylerTalk.quotesOnly(v[0], talk, 1L)
         check("quotes only", q.source == "quotes" && q.calls.any { it.ticker == "NVDA" } && q.keyLines.isNotEmpty())
         check("fit short", TylerTalk.fit(talk) == talk)
+    }
+
+    private fun ripple() {
+        val rnd = java.util.Random(11)
+        val days = 520
+        val dates = (0 until days).map { java.time.LocalDate.of(2024, 1, 1).plusDays(it.toLong()).toString() }
+        val lr = DoubleArray(days) { rnd.nextGaussian() * 0.02 }
+        fun series(f: (Int) -> Double): List<Candle> { var p = 100.0; return dates.mapIndexed { i, d -> if (i > 0) p *= 1 + f(i); Candle(d, p, p, p, p, 1e6, p) } }
+        val leader = series { lr[it] }
+        val follower = series { 1.5 * lr[it] + rnd.nextGaussian() * 0.01 }
+        val opposite = series { -0.8 * lr[it] + rnd.nextGaussian() * 0.01 }
+        val own = series { rnd.nextGaussian() * 0.02 }
+        val a = Ripple.stats("FOL", leader, follower)
+        check("ripple beta", a != null && kotlin.math.abs(a.beta - 1.5) < 0.12 && a.corr > 0.9 && a.strength == Strength.TIGHT && a.upOnBigDays > 0.9) { "$a" }
+        check("ripple big days", a != null && a.bigDays in 40..60 && a.next5AfterBigPct != null) { "$a" }
+        val b = Ripple.stats("OPP", leader, opposite)
+        check("ripple opposite", b?.strength == Strength.OPPOSITE) { "$b" }
+        val c = Ripple.stats("OWN", leader, own)
+        check("ripple own", c != null && c.strength == Strength.OWN) { "$c" }
+        // Different trading calendars: only common dates count.
+        val gappy = follower.filterIndexed { i, _ -> i % 7 != 3 }
+        val g = Ripple.stats("GAP", leader, gappy)
+        check("ripple aligned", g != null && g.days < a!!.days && g.corr > 0.6) { "$g" }
+        check("ripple short", Ripple.stats("X", leader.take(60), follower.take(60)) == null)
+        check("ripple explain", Ripple.explain("NVDA", a!!).contains("1.5%") && Ripple.explain("NVDA", c!!).contains("own thing"))
+        check("ripple map", Ripple.nodesFor("nvda")?.any { it.symbol == "TSM" && it.link == Link.MAKERS } == true)
     }
 
     @JvmStatic
