@@ -47,7 +47,7 @@ import com.shinobisondre.stockanalyzer.ui.Pill
 import com.shinobisondre.stockanalyzer.ui.SectionCard
 import com.shinobisondre.stockanalyzer.ui.ToneChip
 import com.shinobisondre.stockanalyzer.ui.theme.Palette
-import com.shinobisondre.stockanalyzer.ui.toneColor
+import com.shinobisondre.stockanalyzer.ui.theme.toneColor
 
 private fun stanceLabel(s: String) = when (s) { "bullish" -> "Bullish"; "bearish" -> "Bearish"; "mixed" -> "Mixed"; else -> "Neutral" }
 private fun arrow(view: String) = when (view) { "bullish" -> "↑"; "bearish" -> "↓"; else -> "→" }
