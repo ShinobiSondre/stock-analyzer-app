@@ -8,7 +8,6 @@
     app:surface_type="surface_view"
     app:use_controller="true"
     app:show_buffering="when_playing"
-    app:controller_autoshow="true"
     app:shutter_background_color="@android:color/black"
     app:keep_content_on_player_reset="true"
     app:resize_mode="fit" />
