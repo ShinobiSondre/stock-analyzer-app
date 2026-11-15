@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
@@ -75,6 +76,7 @@ data class FoldInfo(
 private fun Tab.icon(): ImageVector = when (this) {
     Tab.MARKETS -> Icons.Filled.Home
     Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.BoltIcon
+    Tab.TYLER -> Icons.Filled.PlayArrow
     Tab.SCANNER -> Icons.Filled.Search
     Tab.PORTFOLIO -> Icons.Filled.AccountBox
     Tab.ALERTS -> Icons.Filled.Notifications
@@ -106,7 +108,7 @@ private fun CompactLayout(vm: MainViewModel, tab: Tab, selected: String?, unread
         bottomBar = {
             if (selected == null) NavigationBar(containerColor = Palette.surface) {
                 // Settings lives behind the gear on the home page on the narrow screen.
-                Tab.entries.filter { it != Tab.SETTINGS }.forEach { t ->
+                Tab.entries.filter { it.inBottomBar }.forEach { t ->
                     NavigationBarItem(
                         selected = t == tab,
                         onClick = { vm.tab.value = t },
@@ -200,6 +202,7 @@ fun TabContent(vm: MainViewModel, tab: Tab, twoPane: Boolean) {
     when (tab) {
         Tab.MARKETS -> MarketsScreen(vm)
         Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.QuickWinsScreen(vm)
+        Tab.TYLER -> com.shinobisondre.stockanalyzer.ui.screens.TylerScreen(vm)
         Tab.SCANNER -> ScannerScreen(vm)
         Tab.PORTFOLIO -> PortfolioScreen(vm, twoPane)
         Tab.ALERTS -> AlertsScreen(vm)

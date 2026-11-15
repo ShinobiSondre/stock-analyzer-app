@@ -87,6 +87,7 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         intent ?: return
         intent.getStringExtra(EXTRA_SYMBOL)?.let { vm.open(it) }
+        intent.getStringExtra(EXTRA_TAB)?.let { name -> Tab.entries.firstOrNull { it.name == name } }?.let { vm.close(); vm.tab.value = it }
         // A screenshot shared from Nordnet (or the gallery): import the holdings on it.
         if (intent.type?.startsWith("image/") == true) {
             val uris: List<Uri> = when (intent.action) {
@@ -110,5 +111,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_SYMBOL = "symbol"
         const val EXTRA_UPDATE = "update"
+        const val EXTRA_TAB = "tab"
     }
 }

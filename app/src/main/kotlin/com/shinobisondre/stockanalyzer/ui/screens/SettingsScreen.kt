@@ -100,6 +100,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 ToggleRow("Big moves", "Once per stock per day", s.notifyMoves) { v -> vm.settings { it.copy(notifyMoves = v) } }
                 ToggleRow("Tyler 3/4-stacks", null, s.notifyStacks) { v -> vm.settings { it.copy(notifyStacks = v) } }
                 ToggleRow("Market regime", "Bull/caution/bear changes and S&P 500 death cross", s.notifyMarket) { v -> vm.settings { it.copy(notifyMarket = v) } }
+                ToggleRow("New Tyler Hill videos", "What he expects, summarised, when he posts", s.notifyTyler) { v -> vm.settings { it.copy(notifyTyler = v) } }
                 if (!Notifier.canPost(ctx)) {
                     Text("Notifications are blocked for this app.", color = Palette.warn, fontSize = 13.sp)
                     OutlinedButton(onClick = {

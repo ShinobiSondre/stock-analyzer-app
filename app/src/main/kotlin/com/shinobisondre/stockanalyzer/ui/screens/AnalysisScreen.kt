@@ -159,6 +159,10 @@ private fun AnalysisBody(vm: MainViewModel, core: Core, extras: Load<Extras>?, c
 @Composable
 private fun CardsGrid(vm: MainViewModel, core: Core, extras: Load<Extras>?, calls: List<LoggedCall>, includeChart: Boolean, chart: @Composable () -> Unit) {
     val a = core.analysis
+    val tylerState by vm.tyler.collectAsStateWithLifecycle()
+    val hasTylerTake = remember(tylerState.takes, core.symbol) {
+        com.shinobisondre.stockanalyzer.engine.TylerTalk.latestOn(tylerState.takes.values.toList(), core.symbol) != null
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val twoCol = maxWidth >= 700.dp
         LazyVerticalStaggeredGrid(
@@ -174,6 +178,7 @@ private fun CardsGrid(vm: MainViewModel, core: Core, extras: Load<Extras>?, call
             item(key = "drivers") { DriversCard(a) }
             if (a.rules.setups.isNotEmpty()) item(key = "setups") { SetupsCard(a) }
             a.holding?.let { h -> item(key = "hold") { HoldingCard(h) } }
+            if (hasTylerTake) item(key = "tylerTake") { TylerOnStock(vm, core.symbol) }
             item(key = "summary") { SummaryCard(a) }
             item(key = "fund") { FundamentalsCard(core, extras) }
             item(key = "cat") { CatalystsCard(extras) }

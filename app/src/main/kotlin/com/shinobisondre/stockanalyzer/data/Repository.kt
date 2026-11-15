@@ -28,6 +28,10 @@ import com.shinobisondre.stockanalyzer.engine.QualityScore
 import com.shinobisondre.stockanalyzer.engine.Series
 import com.shinobisondre.stockanalyzer.engine.TrackRecord
 import com.shinobisondre.stockanalyzer.engine.TrackSummary
+import com.shinobisondre.stockanalyzer.engine.TylerTake
+import com.shinobisondre.stockanalyzer.engine.TylerTalk
+import com.shinobisondre.stockanalyzer.engine.YtVideo
+import com.shinobisondre.stockanalyzer.engine.MiniJson.list
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -399,6 +403,68 @@ class Repository(private val context: Context, val store: Store) {
         val detailed = top.map { q -> async { quickWin(q.symbol, q.owned, q.watched, intraday = true) ?: q } }.map { it.await() }.associateBy { it.symbol }
         firstPass.map { detailed[it.symbol] ?: it }
             .sortedWith(compareByDescending<QuickWin> { it.owned }.thenByDescending { it.watched }.thenByDescending { it.changePct })
+    }
+
+    // ── Tyler Hill video summaries ──────────────────────────────────────────
+    private val tylerFile = java.io.File(context.filesDir, "tyler.json")
+    private val tylerLock = Mutex()
+
+    class TylerCache(val videos: List<YtVideo>, val takes: Map<String, TylerTake>, val fetchedAt: Long)
+
+    private fun videoMap(v: YtVideo) = linkedMapOf("id" to v.id, "title" to v.title, "published" to v.published, "description" to v.description.take(2000), "short" to v.short)
+    private fun videoFrom(m: Map<String, Any?>) = YtVideo(m["id"].str() ?: "", m["title"].str() ?: "", m["published"].str() ?: "", m["description"].str() ?: "", m["short"] == true)
+
+    fun tylerCache(): TylerCache = runCatching {
+        val m = MiniJson.parse(tylerFile.readText()).obj()
+        TylerCache(m["videos"].list().map { videoFrom(it.obj()) }.filter { it.id.isNotBlank() },
+            m["takes"].obj().mapValues { TylerTake.fromMap(it.value.obj()) }, m["fetchedAt"].num()?.toLong() ?: 0L)
+    }.getOrDefault(TylerCache(emptyList(), emptyMap(), 0L))
+
+    private suspend fun saveTyler(fn: (TylerCache) -> TylerCache): TylerCache = tylerLock.withLock {
+        val next = fn(tylerCache())
+        withContext(Dispatchers.IO) {
+            val tmp = java.io.File(tylerFile.parentFile, "tyler.json.tmp")
+            // Keep the 30 newest summaries.
+            val keep = next.takes.values.sortedByDescending { it.published }.take(30).associateBy { it.videoId }
+            tmp.writeText(MiniJson.write(linkedMapOf("videos" to next.videos.map { videoMap(it) }, "takes" to keep.mapValues { it.value.toMap() }, "fetchedAt" to next.fetchedAt)))
+            tmp.renameTo(tylerFile)
+        }
+        next
+    }
+
+    /** Latest uploads (long videos only — Shorts rarely say what he expects). */
+    suspend fun tylerVideos(): List<YtVideo> {
+        val vids = YouTube.latest().filter { !it.short }
+        saveTyler { TylerCache(vids, it.takes, System.currentTimeMillis()) }
+        return vids
+    }
+
+    /** Transcript → AI summary of what Tyler thinks will happen (key quotes only if no AI answers). */
+    suspend fun tylerSummarize(v: YtVideo, onStage: (String) -> Unit): TylerTake {
+        onStage("Getting the transcript…")
+        val (info, pieces) = runCatching { YouTube.transcript(v.id) }.getOrDefault(null to null)
+        val text = pieces?.let { TylerTalk.clean(it) }?.takeIf { it.split(' ').size > 40 }
+        val video = v.copy(
+            description = info?.description?.takeIf { it.isNotBlank() } ?: v.description,
+            published = info?.publishDate?.takeIf { v.published.isBlank() } ?: v.published,
+            title = v.title.ifBlank { info?.title ?: "" },
+        )
+        val keys = text?.let { TylerTalk.keyLines(it) } ?: emptyList()
+        val words = text?.split(' ')?.size ?: 0
+        onStage(if (text != null) "Summarising ${"%,d".format(words)} words…" else "No transcript — summarising the title and description…")
+        val now = System.currentTimeMillis()
+        var take: TylerTake? = null
+        for (attempt in 0..1) {
+            val prompt = if (attempt == 0 || text == null) TylerTalk.userPrompt(video, text)
+            else TylerTalk.userPrompt(video, text.split(' ').take(3500).joinToString(" ")) // shorter retry
+            val r = runCatching { Ai.chat(TylerTalk.system(), prompt) }
+            val (answer, provider) = r.getOrNull() ?: continue
+            take = TylerTalk.parseAnswer(answer, video, keys, "ai:$provider" + (if (text == null) " (no transcript)" else ""), words, now)
+            if (take != null) break
+        }
+        val result = take ?: TylerTalk.quotesOnly(video, text, now)
+        saveTyler { c -> TylerCache(c.videos, c.takes + (v.id to result), c.fetchedAt) }
+        return result
     }
 
     suspend fun trackRecord(): TrackView {

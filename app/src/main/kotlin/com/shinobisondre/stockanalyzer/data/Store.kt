@@ -31,6 +31,7 @@ data class Settings(
     val notifyStacks: Boolean = true,
     val notifyMarket: Boolean = true,
     val autoUpdateCheck: Boolean = true,
+    val notifyTyler: Boolean = true,
 )
 
 data class AlertItem(val id: String, val symbol: String, val type: String, val title: String, val message: String, val time: Long, val read: Boolean = false)
@@ -105,7 +106,7 @@ class Store(context: Context) {
             "settings" to s.settings.let {
                 linkedMapOf("baseCurrency" to it.baseCurrency, "alertsEnabled" to it.alertsEnabled, "alertIntervalMin" to it.alertIntervalMin,
                     "bigMovePct" to it.bigMovePct, "notifyCalls" to it.notifyCalls, "notifyMoves" to it.notifyMoves, "notifyStacks" to it.notifyStacks,
-                    "notifyMarket" to it.notifyMarket, "autoUpdateCheck" to it.autoUpdateCheck)
+                    "notifyMarket" to it.notifyMarket, "autoUpdateCheck" to it.autoUpdateCheck, "notifyTyler" to it.notifyTyler)
             },
             "calls" to s.calls.takeLast(MAX_CALLS).map {
                 linkedMapOf("s" to it.symbol, "d" to it.date, "c" to it.close, "k" to it.call, "p5" to it.p5, "p10" to it.p10, "p22" to it.p22, "b" to it.base10, "m" to it.modelVersion)
@@ -138,7 +139,7 @@ class Store(context: Context) {
                     bigMovePct = st["bigMovePct"].num() ?: d.settings.bigMovePct,
                     notifyCalls = b(st, "notifyCalls", true), notifyMoves = b(st, "notifyMoves", true),
                     notifyStacks = b(st, "notifyStacks", true), notifyMarket = b(st, "notifyMarket", true),
-                    autoUpdateCheck = b(st, "autoUpdateCheck", true),
+                    autoUpdateCheck = b(st, "autoUpdateCheck", true), notifyTyler = b(st, "notifyTyler", true),
                 ),
                 calls = m["calls"].list().map { it.obj() }.mapNotNull { c ->
                     LoggedCall(c["s"].str() ?: return@mapNotNull null, c["d"].str() ?: return@mapNotNull null, c["c"].num() ?: 0.0,

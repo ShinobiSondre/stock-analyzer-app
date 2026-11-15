@@ -33,6 +33,7 @@ object EngineSelfTest {
         jsonRoundTrip()
         brokerScreenshots()
         dayAfter()
+        tyler()
         println("EngineSelfTest: $passed checks passed, ${failures.size} failed")
         failures.forEach { println("  FAIL $it") }
         return failures.toList()
@@ -322,6 +323,59 @@ object EngineSelfTest {
         val back = DayAfterBook.fromJson(book.toJson())
         check("eod json", back.us.buckets[DayAfter.key(1, null, 2, null)] == run && back.oslo == null && back.table("EQNR.OL") === back.us)
         near("clv", DayAfter.clv(105.0, 100.0, 110.0), 0.5, 1e-12)
+    }
+
+    private fun tyler() {
+        val feed = """<?xml version="1.0"?><feed><title>Tyler Hill Stocks</title>
+            <entry><id>yt:video:abcDEF12345</id><yt:videoId>abcDEF12345</yt:videoId><title>I&#39;m Selling NVDA &amp; Buying This</title>
+            <link rel="alternate" href="https://www.youtube.com/watch?v=abcDEF12345"/><published>2026-11-14T15:00:12+00:00</published>
+            <media:group><media:description>My 4 sell signals…</media:description></media:group></entry>
+            <entry><yt:videoId>short000001</yt:videoId><title>quick one</title><link rel="alternate" href="https://www.youtube.com/shorts/short000001"/><published>2026-11-13T15:00:00+00:00</published></entry>
+            </feed>"""
+        val v = YouTubeParse.feed(feed)
+        check("yt feed", v.size == 2 && v[0].id == "abcDEF12345" && v[0].title == "I'm Selling NVDA & Buying This" && !v[0].short && v[1].short) { "$v" }
+        check("yt feed desc", v[0].description.startsWith("My 4 sell"))
+
+        val player = """{"playabilityStatus":{"status":"OK"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[
+            {"baseUrl":"https://www.youtube.com/api/timedtext?v=x&lang=en&kind=asr","languageCode":"en","kind":"asr"},
+            {"baseUrl":"https://www.youtube.com/api/timedtext?v=x&lang=de","languageCode":"de"}]}},
+            "videoDetails":{"title":"T","shortDescription":"D","channelId":"UC-FwZq0rYfc2SzYkpoNBJGg"},
+            "microformat":{"playerMicroformatRenderer":{"publishDate":"2026-11-14"}}}"""
+        val pi = YouTubeParse.player(player, plain = true)
+        check("yt player", pi != null && pi.tracks.size == 2 && pi.status == "OK" && pi.publishDate == "2026-11-14")
+        check("yt pick asr en", YouTubeParse.pickTrack(pi!!.tracks)?.let { it.first.lang == "en" && it.second == null } == true)
+        check("yt pick translate", YouTubeParse.pickTrack(listOf(CaptionTrack("u", "es", true, true)))?.second == "en")
+
+        val xml = """<?xml version="1.0"?><transcript><text start="0.1" dur="2">so I think NVIDIA is going</text><text start="2.1" dur="2">to &amp;amp;#39;rip&amp;amp;#39; to 200</text></transcript>"""
+        check("yt xml captions", YouTubeParse.captions(xml) == listOf("so I think NVIDIA is going", "to 'rip' to 200")) { YouTubeParse.captions(xml).toString() }
+        val json3 = """{"events":[{"tStartMs":0,"segs":[{"utf8":"hello"},{"utf8":" world"}]},{"tStartMs":10},{"tStartMs":20,"segs":[{"utf8":"\n"}]}]}"""
+        check("yt json3", YouTubeParse.captions(json3) == listOf("hello world"))
+        check("yt page key", YouTubeParse.apiKey("""ytcfg.set({"INNERTUBE_API_KEY": "AIzaXYZ_123"})""") == "AIzaXYZ_123")
+        check("yt extract", YouTubeParse.extractJson("""var ytInitialPlayerResponse = {"a":{"b":"}"}};var x""", "ytInitialPlayerResponse") == """{"a":{"b":"}"}}""")
+
+        check("tickers alias", TylerTalk.tickersIn("I think Nvidia and Taiwan Semi go higher, \$PLTR too").containsAll(listOf("NVDA", "TSM", "PLTR")))
+        check("tickers caps", TylerTalk.tickersIn("Why I'm Selling NVDA Now", caps = true) == listOf("NVDA"))
+        check("clean", TylerTalk.clean(listOf("[Music]", "so", "so", "I think  this")) == "so I think this")
+        val talk = "welcome back guys so today we are going to look at the market " +
+            "I think Nvidia is going to pull back to around 160 dollars where the 50 day sits and that is my buy zone " +
+            "make sure to subscribe and check the link in the description for the sponsor " +
+            "the S&P 500 RSI is above 70 with bearish divergence so I'm trimming 10 percent of my Palantir position this week"
+        val key = TylerTalk.keyLines(talk)
+        check("key lines", key.any { it.contains("160") } && key.none { it.contains("subscribe") }) { key.toString() }
+
+        val answer = "Sure! ```json\n{\"headline\":\"He expects a pullback before year end\",\"stance\":\"Bearish\",\"market\":\"S&P 500 to pull back 5-8%\"," +
+            "\"calls\":[{\"ticker\":\"\",\"name\":\"Nvidia\",\"view\":\"bullish\",\"what\":\"buy at 160\",\"levels\":\"160\",\"timeframe\":\"weeks\",\"action\":\"watching\"}," +
+            "{\"ticker\":\"PLTR\",\"name\":\"Palantir\",\"view\":\"bearish\",\"what\":\"overextended\",\"levels\":\"empty\",\"timeframe\":\"\",\"action\":\"trimming\"}]," +
+            "\"moves\":\"Trimmed 10% of PLTR\",\"watch\":\"RSI divergence\",\"caveats\":\"\"}\n```"
+        val take = TylerTalk.parseAnswer(answer, v[0], key, "ai:test", 120, 1L)
+        check("take parse", take != null && take.stance == "bearish" && take.calls.size == 2 && take.calls[0].ticker == "NVDA" && take.calls[1].levels == "" && take.calls[1].action == "trimming") { "$take" }
+        val back = TylerTake.fromMap(MiniJson.parse(MiniJson.write(take!!.toMap())).let { @Suppress("UNCHECKED_CAST") (it as Map<String, Any?>) })
+        check("take json", back == take)
+        check("take latestOn", TylerTalk.latestOn(listOf(take), "NVDA")?.second?.view == "bullish" && TylerTalk.latestOn(listOf(take), "AAPL") == null)
+        check("take bad answer", TylerTalk.parseAnswer("I can't help with that", v[0], key, "ai:test", 1, 1L) == null)
+        val q = TylerTalk.quotesOnly(v[0], talk, 1L)
+        check("quotes only", q.source == "quotes" && q.calls.any { it.ticker == "NVDA" } && q.keyLines.isNotEmpty())
+        check("fit short", TylerTalk.fit(talk) == talk)
     }
 
     @JvmStatic

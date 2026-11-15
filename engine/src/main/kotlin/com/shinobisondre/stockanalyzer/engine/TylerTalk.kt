@@ -109,8 +109,8 @@ object TylerTalk {
         return out.joinToString(" ").replace(Regex("\\s+"), " ").trim()
     }
 
-    /** ~30-word windows (automatic captions often have no punctuation). */
-    fun windows(text: String, size: Int = 32): List<String> {
+    /** ~24-word windows (automatic captions often have no punctuation). */
+    fun windows(text: String, size: Int = 24): List<String> {
         val sentences = text.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
         val avgLen = if (sentences.isEmpty()) 0.0 else sentences.sumOf { it.split(' ').size }.toDouble() / sentences.size
         if (sentences.size > 3 && avgLen in 4.0..45.0) {
@@ -142,7 +142,7 @@ object TylerTalk {
             sc += tickersIn(s).size * 1.5
             sc += Regex("\\$?\\d+(?:[.,]\\d+)?\\s?(%|percent|dollars|bucks|k\\b)").findAll(low).count() * 1.2
             sc += Regex("\\b\\d{2,5}(?:\\.\\d+)?\\b").findAll(low).count() * 0.4
-            if (low.contains("sponsor") || low.contains("link in the description") || low.contains("subscribe") || low.contains("discord")) sc -= 6
+            if (low.contains("sponsor") || low.contains("link in the description") || low.contains("subscribe") || low.contains("discord") || low.contains("patreon")) sc -= 10
             Triple(i, s, sc)
         }
         return scored.filter { it.third >= 3.0 }.sortedByDescending { it.third }.take(max).sortedBy { it.first }.map { it.second.trim() }

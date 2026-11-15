@@ -36,7 +36,24 @@ sealed interface Load<out T> {
 
 fun <T> Load<T>.value(): T? = (this as? Load.Ok<T>)?.v
 
-enum class Tab(val label: String) { MARKETS("Markets"), QUICK("Quick wins"), SCANNER("Scanner"), PORTFOLIO("Portfolio"), ALERTS("Alerts"), SETTINGS("Settings") }
+enum class Tab(val label: String, val inBottomBar: Boolean = true) {
+    MARKETS("Markets"), QUICK("Quick wins"), SCANNER("Scanner"), PORTFOLIO("Portfolio"), TYLER("Tyler"),
+    // Behind the bell / gear on the home page on the narrow screen; in the side rail when unfolded.
+    ALERTS("Alerts", false), SETTINGS("Settings", false),
+}
+
+data class TylerState(
+    val videos: List<com.shinobisondre.stockanalyzer.engine.YtVideo> = emptyList(),
+    val takes: Map<String, com.shinobisondre.stockanalyzer.engine.TylerTake> = emptyMap(),
+    /** videoId → what's happening right now ("Getting the transcript…"). */
+    val working: Map<String, String> = emptyMap(),
+    val loading: Boolean = false,
+    val error: String? = null,
+    val at: Long = 0,
+) {
+    /** Newest first, summaries only. */
+    val ordered get() = takes.values.sortedByDescending { it.published }
+}
 
 enum class Universe(val label: String, val note: String) {
     CORE("US core 30", "The web app's default watchlist"),
@@ -120,6 +137,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val splash = MutableStateFlow<List<com.shinobisondre.stockanalyzer.data.QuickWin>?>(null)
     private var quickJob: Job? = null
     private var shotJob: Job? = null
+    val tyler = MutableStateFlow(TylerState())
+    private var tylerJob: Job? = null
     private var lastAutoUpdate = 0L
     private var backgroundInstall: Job? = null
 
@@ -133,6 +152,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loadWatchlist()
         // Holdings too, so the Markets banner can flag a big mover you own.
         state.value.holdings.forEach { load(it.symbol, permits = true) }
+        loadTylerCache()
         autoUpdate()
     }
 
@@ -293,6 +313,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val failed = syms.filterIndexed { i, _ -> res[i].isFailure }
             scan.update { it.copy(running = false, results = ok.sortedByDescending { c -> c.p10 ?: c.analysis.rules.rawScore / 10 }, failed = failed, at = System.currentTimeMillis()) }
         }
+    }
+
+    // ── Tyler Hill ───────────────────────────────────────────────────────────
+    private fun loadTylerCache() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val c = repo.tylerCache()
+            tyler.update { it.copy(videos = it.videos.ifEmpty { c.videos }, takes = c.takes + it.takes) }
+        }
+    }
+
+    /** Fetch his latest videos and summarise the newest ones that aren't summarised yet (one at a time — free AI is rate-limited). */
+    fun loadTyler(force: Boolean = false) {
+        val t = tyler.value
+        if (t.loading || tylerJob?.isActive == true || (!force && t.at > 0 && System.currentTimeMillis() - t.at < 20 * 60_000)) return
+        tyler.update { it.copy(loading = true, error = null) }
+        tylerJob = viewModelScope.launch {
+            val vids = runCatching { repo.tylerVideos() }
+            vids.onFailure { e -> tyler.update { it.copy(loading = false, error = "Couldn't reach YouTube: ${e.message}") } }
+            val list = vids.getOrNull() ?: return@launch
+            tyler.update { it.copy(videos = list, loading = false, at = System.currentTimeMillis()) }
+            for (v in list.take(6)) {
+                if (tyler.value.takes[v.id]?.aiMade == true) continue
+                summariseTyler(v)
+            }
+        }
+    }
+
+    private suspend fun summariseTyler(v: com.shinobisondre.stockanalyzer.engine.YtVideo) {
+        tyler.update { it.copy(working = it.working + (v.id to "Starting…")) }
+        val take = runCatching { repo.tylerSummarize(v) { stage -> tyler.update { s -> s.copy(working = s.working + (v.id to stage)) } } }.getOrNull()
+        tyler.update { s -> s.copy(working = s.working - v.id, takes = if (take != null) s.takes + (v.id to take) else s.takes) }
+    }
+
+    fun resummarise(videoId: String) {
+        val v = tyler.value.videos.firstOrNull { it.id == videoId } ?: tyler.value.takes[videoId]?.let {
+            com.shinobisondre.stockanalyzer.engine.YtVideo(it.videoId, it.title, it.published)
+        } ?: return
+        if (videoId in tyler.value.working) return
+        viewModelScope.launch { summariseTyler(v) }
     }
 
     // ── Quick wins ───────────────────────────────────────────────────────────

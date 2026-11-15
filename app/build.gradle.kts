@@ -20,6 +20,8 @@ android {
         versionCode = appVersionCode
         versionName = "1.0.$appVersionCode"
         buildConfigField("String", "UPDATE_REPO", "\"ShinobiSondre/stock-analyzer-app\"")
+        // 64-bit ARM only (every current Galaxy): keeps ML Kit's OCR model from tripling the APK size.
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     signingConfigs {

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -103,6 +104,12 @@ fun MarketsScreen(vm: MainViewModel) {
         item {
             ScreenHeader("Markets", "Odds-based analysis for your watchlist") {
                 IconButton(onClick = { vm.refreshAll() }) { Icon(Icons.Filled.Refresh, "Refresh") }
+                val unread = st.alerts.count { !it.read }
+                IconButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.ALERTS }) {
+                    if (unread > 0) androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge { Text(if (unread > 99) "99+" else unread.toString()) } }) {
+                        Icon(Icons.Filled.Notifications, "Alerts")
+                    } else Icon(Icons.Filled.Notifications, "Alerts")
+                }
                 IconButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.SETTINGS }) { Icon(Icons.Filled.Settings, "Settings") }
             }
         }

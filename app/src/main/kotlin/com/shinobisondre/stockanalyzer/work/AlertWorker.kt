@@ -60,11 +60,12 @@ object Notifier {
         try { NotificationManagerCompat.from(ctx).notify(id, n) } catch (_: SecurityException) { }
     }
 
-    fun post(ctx: Context, channel: String, id: Int, title: String, text: String, symbol: String? = null) {
+    fun post(ctx: Context, channel: String, id: Int, title: String, text: String, symbol: String? = null, tab: String? = null) {
         if (!canPost(ctx)) return
         val intent = Intent(ctx, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             symbol?.let { putExtra(MainActivity.EXTRA_SYMBOL, it) }
+            tab?.let { putExtra(MainActivity.EXTRA_TAB, it) }
             if (channel == CH_UPDATES) putExtra(MainActivity.EXTRA_UPDATE, true)
         }
         val pi = PendingIntent.getActivity(ctx, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -180,9 +181,28 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             Notifier.post(applicationContext, Notifier.CH_ALERTS, (al.id.hashCode() and 0x7fffffff) + i, al.title, al.message, al.symbol.takeIf { it != "MARKET" })
         }
 
+        // New Tyler Hill video → summarise it and say what he expects (checked every ~3 hours).
+        if (settings.notifyTyler) runCatching { tylerCheck(repo) }
+
         // Daily update check.
         if (settings.autoUpdateCheck) runCatching { Updater.backgroundCheck(applicationContext) }
         return Result.success()
+    }
+
+    private suspend fun tylerCheck(repo: com.shinobisondre.stockanalyzer.data.Repository) {
+        val prefs = applicationContext.getSharedPreferences("tyler", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("lastCheck", 0) < 3 * 3600_000L) return
+        prefs.edit().putLong("lastCheck", now).apply()
+        val newest = repo.tylerVideos().firstOrNull() ?: return
+        val seen = prefs.getString("lastSeen", null)
+        prefs.edit().putString("lastSeen", newest.id).apply()
+        if (seen == null || seen == newest.id) return // first run: just remember where we are
+        val take = repo.tylerCache().takes[newest.id] ?: repo.tylerSummarize(newest) { }
+        val body = if (take.aiMade) listOf(take.headline, take.calls.filter { it.ticker.isNotBlank() }.take(5).joinToString("  ") {
+            it.ticker + when (it.view) { "bullish" -> " ↑"; "bearish" -> " ↓"; else -> "" }
+        }).filter { it.isNotBlank() }.joinToString("\n") else "New video: ${newest.title}"
+        Notifier.post(applicationContext, Notifier.CH_ALERTS, 9100, "Tyler Hill: ${newest.title}".take(90), body, tab = "TYLER")
     }
 
     private fun alert(symbol: String, type: String, title: String, message: String) =
