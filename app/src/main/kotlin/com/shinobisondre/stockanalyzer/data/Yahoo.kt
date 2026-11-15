@@ -158,6 +158,7 @@ object Yahoo {
                 val name = if (type == "MUTUALFUND") it["longname"].str() ?: it["shortname"].str() else it["shortname"].str() ?: it["longname"].str()
                 SearchHit(it["symbol"].str()!!, name ?: it["symbol"].str()!!, type, it["exchDisp"].str() ?: it["exchange"].str() ?: "")
             }
+            .distinctBy { it.symbol }
         val items = root["news"].list().map { it.obj() }.mapNotNull {
             val title = it["title"].str() ?: return@mapNotNull null
             NewsItem(title, it["publisher"].str() ?: "Yahoo", it["link"].str() ?: "", it["providerPublishTime"].num()?.toLong())

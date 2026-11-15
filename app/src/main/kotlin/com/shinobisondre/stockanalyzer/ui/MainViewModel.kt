@@ -97,6 +97,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val listPermits = Semaphore(5)
 
     init {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) { repo.model } // parse model.json off the main thread
         refreshMarket()
         loadWatchlist()
         if (state.value.settings.autoUpdateCheck) checkUpdate(silent = true)
@@ -219,8 +220,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun importHoldings(text: String, replaceAll: Boolean): String {
-        val (ok, bad) = HoldingsText.parse(text)
-        if (ok.isEmpty()) return "Nothing recognised. Use lines like: AAPL 10 @ 182.5"
+        val (parsed, bad) = HoldingsText.parse(text)
+        if (parsed.isEmpty()) return "Nothing recognised. Use lines like: AAPL 10 @ 182.5"
+        // The same ticker twice is merged (shares summed, cost share-weighted) — duplicate keys would crash the list.
+        val ok = parsed.groupBy { it.symbol }.map { (sym, list) ->
+            val shares = list.sumOf { it.shares }
+            val costed = list.filter { it.avgCost != null }
+            val cost = if (costed.isEmpty()) null else costed.sumOf { it.avgCost!! * it.shares } / costed.sumOf { it.shares }
+            HoldingsText.Parsed(sym, shares, cost)
+        }
         viewModelScope.launch {
             repo.store.update { st ->
                 val base = if (replaceAll) emptyList() else st.holdings.filter { h -> ok.none { it.symbol == h.symbol } }

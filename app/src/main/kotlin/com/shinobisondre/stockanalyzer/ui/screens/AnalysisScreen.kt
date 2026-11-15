@@ -43,7 +43,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -135,7 +134,7 @@ fun AnalysisScreen(vm: MainViewModel, symbol: String, showBack: Boolean, tableto
 
 @Composable
 private fun AnalysisBody(vm: MainViewModel, core: Core, extras: Load<Extras>?, calls: List<LoggedCall>, tabletopTop: Dp?) {
-    var periodIdx by rememberSaveable(core.symbol) { mutableIntStateOf(2) }
+    var periodIdx by rememberSaveable(core.symbol) { mutableStateOf(2) }
     var overlays by remember { mutableStateOf(setOf(Overlay.SMA50, Overlay.SMA200)) }
     var sel by remember(core.symbol) { mutableStateOf<Int?>(null) }
     var panes by rememberSaveable { mutableStateOf("RSI") }

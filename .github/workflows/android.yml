@@ -37,7 +37,7 @@ jobs:
       - name: Test engine and build release APK
         run: |
           set -o pipefail
-          ./gradlew :engine:test :app:assembleRelease -PversionCode=${{ github.run_number }} --no-daemon --stacktrace 2>&1 | tee build.log
+          ./gradlew :engine:test :app:testReleaseUnitTest :app:assembleRelease -PversionCode=${{ github.run_number }} --no-daemon --stacktrace 2>&1 | tee build.log
 
       - name: Publish release
         env:
@@ -54,7 +54,7 @@ jobs:
         run: |
           mkdir -p /tmp/pub
           cp build.log /tmp/pub/ 2>/dev/null || true
-          for f in engine/build/test-results/test/*.xml; do [ -f "$f" ] && cp "$f" /tmp/pub/; done
+          for f in engine/build/test-results/test/*.xml app/build/test-results/testReleaseUnitTest/*.xml; do [ -f "$f" ] && cp "$f" /tmp/pub/; done
           echo "${GITHUB_SHA} ${{ job.status }} run ${{ github.run_number }} $(date -u +%FT%TZ)" > /tmp/pub/STATUS
           cd /tmp/pub
           git init -q

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -74,7 +75,7 @@ class Store(context: Context) {
     suspend fun update(fn: (AppState) -> AppState): AppState = lock.withLock {
         val next = fn(_state.value)
         _state.value = next
-        write(next)
+        withContext(Dispatchers.IO) { write(next) }
         next
     }
 
