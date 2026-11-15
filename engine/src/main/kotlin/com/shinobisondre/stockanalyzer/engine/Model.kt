@@ -26,14 +26,57 @@ data class LabelStat(val n: Int, val upRate: Double, val meanRetPct: Double, val
 
 data class Thresholds(val strong: Double, val buy: Double, val weak: Double, val weakSell: Double, val sell: Double)
 
-/** One calibrated logistic model: P(close is higher [days] sessions from now). */
+/** One regression tree, flattened. A node is a leaf when feat[n] < 0. Goes left when x[feat] <= thr. */
+class Tree(val feat: IntArray, val thr: DoubleArray, val left: IntArray, val right: IntArray, val value: DoubleArray) {
+    fun predict(x: DoubleArray): Double {
+        var n = 0
+        while (feat[n] >= 0) n = if (x[feat[n]] <= thr[n]) left[n] else right[n]
+        return value[n]
+    }
+
+    /** Saabas attribution: each split credits its feature with the change in node value. */
+    fun attribute(x: DoubleArray, out: DoubleArray) {
+        var n = 0
+        while (feat[n] >= 0) {
+            val c = if (x[feat[n]] <= thr[n]) left[n] else right[n]
+            out[feat[n]] += value[c] - value[n]
+            n = c
+        }
+    }
+
+    fun toMap(): Map<String, Any?> = linkedMapOf("f" to feat.toList(), "t" to thr.toList(), "l" to left.toList(), "r" to right.toList(), "v" to value.toList())
+
+    companion object {
+        fun fromMap(m: Map<String, Any?>) = Tree(
+            m["f"].doubles().map { it.toInt() }.toIntArray(), m["t"].doubles(),
+            m["l"].doubles().map { it.toInt() }.toIntArray(), m["r"].doubles().map { it.toInt() }.toIntArray(), m["v"].doubles(),
+        )
+    }
+}
+
+/**
+ * One calibrated model for P(close is higher [days] sessions from now).
+ *
+ * kind = "gbdt"     gradient-boosted trees on the feature vector
+ *        "logistic" linear log-odds on standardised features
+ *        "rules"    the classic weighted-indicator score
+ *
+ * Whatever the kind, the raw score goes through [calX]→[calY], a monotone
+ * map fitted on walk-forward out-of-sample predictions, so the number the
+ * app shows is a measured frequency, not a heuristic "confidence".
+ */
 class HorizonModel(
     val days: Int,
+    val kind: String,
     val featureNames: List<String>,
     val mean: DoubleArray,
     val std: DoubleArray,
     val coef: DoubleArray,
     val intercept: Double,
+    val trees: List<Tree>,
+    val baseScore: Double,
+    val calX: DoubleArray,
+    val calY: DoubleArray,
     val baseRate: Double,
     val thresholds: Thresholds,
     val sellReal: Boolean,
@@ -44,17 +87,33 @@ class HorizonModel(
     /** Reliability table: [mean predicted p, realised up-rate, n]. */
     val calibration: List<DoubleArray>,
 ) {
-    fun z(x: DoubleArray): Double {
-        var z = intercept
-        for (j in coef.indices) if (std[j] > 0) z += coef[j] * (x[j] - mean[j]) / std[j]
-        return z
+    val needsFeatures: Boolean get() = kind != "rules"
+
+    /** Raw score before calibration: log-odds for gbdt/logistic, the rules score for "rules". */
+    fun raw(x: DoubleArray?, rulesScore: Double): Double? = when (kind) {
+        "rules" -> rulesScore
+        "gbdt" -> x?.let { v -> var z = baseScore; for (t in trees) z += t.predict(v); z }
+        else -> x?.let { v -> var z = intercept; for (j in coef.indices) if (std[j] > 0) z += coef[j] * (v[j] - mean[j]) / std[j]; z }
     }
 
-    fun probability(x: DoubleArray): Double = 1.0 / (1.0 + exp(-z(x)))
+    fun calibrate(raw: Double): Double {
+        if (calX.isEmpty()) return 1.0 / (1.0 + exp(-raw))
+        if (raw <= calX[0]) return calY[0]
+        if (raw >= calX[calX.size - 1]) return calY[calY.size - 1]
+        var lo = 0; var hi = calX.size - 1
+        while (hi - lo > 1) { val mid = (lo + hi) ushr 1; if (calX[mid] <= raw) lo = mid else hi = mid }
+        val t = (raw - calX[lo]) / (calX[hi] - calX[lo]).coerceAtLeast(1e-12)
+        return calY[lo] + t * (calY[hi] - calY[lo])
+    }
 
-    /** Signed contribution of each feature to the log-odds (relative to an average bar). */
-    fun contributions(x: DoubleArray): DoubleArray =
-        DoubleArray(coef.size) { j -> if (std[j] > 0) coef[j] * (x[j] - mean[j]) / std[j] else 0.0 }
+    fun probability(x: DoubleArray?, rulesScore: Double): Double? = raw(x, rulesScore)?.let { calibrate(it) }
+
+    /** Signed contribution of each feature to the raw score (relative to an average bar). */
+    fun contributions(x: DoubleArray): DoubleArray = when (kind) {
+        "gbdt" -> DoubleArray(featureNames.size).also { out -> trees.forEach { it.attribute(x, out) } }
+        "logistic" -> DoubleArray(coef.size) { j -> if (std[j] > 0) coef[j] * (x[j] - mean[j]) / std[j] else 0.0 }
+        else -> DoubleArray(featureNames.size)
+    }
 
     fun call(p: Double): Call = when {
         p >= thresholds.strong -> Call.STRONG_BUY
@@ -72,8 +131,9 @@ class HorizonModel(
     }
 
     fun toMap(): Map<String, Any?> = linkedMapOf(
-        "days" to days, "featureNames" to featureNames, "mean" to mean.toList(), "std" to std.toList(),
-        "coef" to coef.toList(), "intercept" to intercept, "baseRate" to baseRate,
+        "days" to days, "kind" to kind, "featureNames" to featureNames, "mean" to mean.toList(), "std" to std.toList(),
+        "coef" to coef.toList(), "intercept" to intercept, "baseScore" to baseScore, "trees" to trees.map { it.toMap() },
+        "calX" to calX.toList(), "calY" to calY.toList(), "baseRate" to baseRate,
         "thresholds" to linkedMapOf("strong" to thresholds.strong, "buy" to thresholds.buy, "weak" to thresholds.weak,
             "weakSell" to thresholds.weakSell, "sell" to thresholds.sell),
         "sellReal" to sellReal, "weakSellReal" to weakSellReal, "intervalK" to intervalK,
@@ -87,9 +147,14 @@ class HorizonModel(
             val t = m["thresholds"].obj()
             return HorizonModel(
                 days = m["days"].num()!!.toInt(),
+                kind = m["kind"].str() ?: "logistic",
                 featureNames = m["featureNames"].list().map { it.str()!! },
                 mean = m["mean"].doubles(), std = m["std"].doubles(), coef = m["coef"].doubles(),
-                intercept = m["intercept"].num()!!, baseRate = m["baseRate"].num()!!,
+                intercept = m["intercept"].num() ?: 0.0,
+                trees = m["trees"].list().map { Tree.fromMap(it.obj()) },
+                baseScore = m["baseScore"].num() ?: 0.0,
+                calX = m["calX"].doubles(), calY = m["calY"].doubles(),
+                baseRate = m["baseRate"].num()!!,
                 thresholds = Thresholds(t["strong"].num()!!, t["buy"].num()!!, t["weak"].num()!!, t["weakSell"].num()!!, t["sell"].num()!!),
                 sellReal = m["sellReal"] as? Boolean ?: false,
                 weakSellReal = m["weakSellReal"] as? Boolean ?: false,
@@ -115,7 +180,9 @@ class ModelBundle(
     fun horizon(days: Int) = horizons.firstOrNull { it.days == days }
 
     /** A bundle only applies if it was trained on exactly this engine's features. */
-    val compatible: Boolean get() = horizons.isNotEmpty() && horizons.all { it.featureNames == Features.NAMES && it.coef.size == Features.SIZE }
+    val compatible: Boolean get() = horizons.isNotEmpty() && horizons.all { h ->
+        !h.needsFeatures || (h.featureNames == Features.NAMES && (h.kind != "logistic" || h.coef.size == Features.SIZE))
+    }
 
     fun toJson(): String = MiniJson.pretty(linkedMapOf(
         "version" to version, "trainedAt" to trainedAt, "dataFrom" to dataFrom, "dataTo" to dataTo,

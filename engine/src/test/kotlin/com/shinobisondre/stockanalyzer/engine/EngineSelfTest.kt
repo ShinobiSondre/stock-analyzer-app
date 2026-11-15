@@ -101,12 +101,21 @@ object EngineSelfTest {
         return MarketSeries(spy, vix)
     }
 
-    fun dummyModel(): ModelBundle {
+    fun dummyModel(kind: String = "logistic"): ModelBundle {
         val k = Features.SIZE
         val hs = listOf(5, 10, 22).map { d ->
-            HorizonModel(d, Features.NAMES, DoubleArray(k), DoubleArray(k) { 1.0 },
+            // One stump on leader_pb plus one on ret5, so gbdt attribution can be checked.
+            val lp = Features.NAMES.indexOf("leader_pb"); val r5 = Features.NAMES.indexOf("ret5")
+            val trees = listOf(
+                Tree(intArrayOf(lp, -1, -1), doubleArrayOf(0.5, 0.0, 0.0), intArrayOf(1, -1, -1), intArrayOf(2, -1, -1), doubleArrayOf(0.0, -0.01, 0.3)),
+                Tree(intArrayOf(r5, -1, -1), doubleArrayOf(0.0, 0.0, 0.0), intArrayOf(1, -1, -1), intArrayOf(2, -1, -1), doubleArrayOf(0.0, 0.05, -0.05)),
+            )
+            HorizonModel(d, kind, Features.NAMES, DoubleArray(k), DoubleArray(k) { 1.0 },
                 DoubleArray(k) { if (Features.NAMES[it] == "leader_pb") 0.3 else if (Features.NAMES[it] == "ret5") -0.05 else 0.0 },
-                0.2, 0.55, Thresholds(0.66, 0.61, 0.59, 0.51, 0.48), sellReal = false, weakSellReal = false, intervalK = 1.05,
+                0.2, trees, 0.2,
+                calX = if (kind == "rules") doubleArrayOf(-1.0, 0.0, 1.0) else doubleArrayOf(-0.5, 0.0, 0.5, 1.0),
+                calY = if (kind == "rules") doubleArrayOf(0.50, 0.55, 0.62) else doubleArrayOf(0.45, 0.53, 0.58, 0.64),
+                baseRate = 0.55, thresholds = Thresholds(0.66, 0.61, 0.59, 0.51, 0.48), sellReal = false, weakSellReal = false, intervalK = 1.05,
                 stats = mapOf("BUY" to LabelStat(1200, 0.61, 1.2, 0.5)), metrics = mapOf("auc" to 0.55), calibration = listOf(doubleArrayOf(0.5, 0.51, 100.0)))
         }
         return ModelBundle("test", "2026-01-01", "2005-01-01", "2026-01-01", 1, 1, hs)
@@ -122,8 +131,20 @@ object EngineSelfTest {
         check("featuresNullEarly", Features.build(s, 100, null) == null)
         val m = dummyModel()
         check("modelCompatible", m.compatible)
-        val p = m.horizon(10)!!.probability(x!!)
+        val p = m.horizon(10)!!.probability(x!!, 0.0)!!
         check("probRange", p in 0.0..1.0) { "$p" }
+        val h = m.horizon(10)!!
+        near("calibInterp", h.calibrate(0.25), 0.555, 1e-12)
+        near("calibClampLo", h.calibrate(-9.0), 0.45, 1e-12)
+        near("calibClampHi", h.calibrate(9.0), 0.64, 1e-12)
+        val g = dummyModel("gbdt").horizon(10)!!
+        val xx = DoubleArray(Features.SIZE); xx[Features.NAMES.indexOf("leader_pb")] = 1.0; xx[Features.NAMES.indexOf("ret5")] = -0.02
+        near("gbdtRaw", g.raw(xx, 0.0), 0.2 + 0.3 + 0.05, 1e-12)
+        val attr = g.contributions(xx)
+        near("gbdtAttr", attr[Features.NAMES.indexOf("leader_pb")], 0.3, 1e-12)
+        val rm = dummyModel("rules").horizon(10)!!
+        near("rulesKind", rm.probability(null, 1.0), 0.62, 1e-12)
+        check("rulesNoFeatures", !rm.needsFeatures)
         check("call", m.horizon(10)!!.call(0.70) == Call.STRONG_BUY && m.horizon(10)!!.call(0.40) == Call.AVOID && m.horizon(10)!!.call(0.55) == Call.HOLD)
         val band = m.horizon(10)!!.band(100.0, 0.02)
         check("band", band.first < 100 && band.second > 100 && abs(band.first * band.second - 10000) < 1e-6) { "$band" }
@@ -181,6 +202,10 @@ object EngineSelfTest {
         val r2 = Rules.evaluate(ind.copy(goldenCross = false, deathCross = false), emptyList(), ms.latest(), null)
         near("noDilution", r.rawScore, r2.rawScore, 1e-12)
         check("short history ok", Analyzer.analyze("NEW", c.take(80), ms, dummyModel())?.forecasts?.all { it.probability == null } == true)
+        // A rules-kind model works even with short history (no feature vector needed).
+        check("rules model short history", Analyzer.analyze("NEW", c.take(80), ms, dummyModel("rules"))?.forecasts?.all { it.probability != null } == true)
+        val gb = Analyzer.analyze("TEST", c, ms, dummyModel("gbdt"))
+        check("gbdt analysis", gb != null && gb.forecasts.all { it.probability != null })
     }
 
     private fun jsonRoundTrip() {
@@ -188,6 +213,8 @@ object EngineSelfTest {
         val back = ModelBundle.fromJson(m.toJson())
         check("jsonVersion", back.version == "test" && back.horizons.size == 3)
         check("jsonCoef", back.horizon(10)!!.coef.contentEquals(m.horizon(10)!!.coef))
+        val gj = ModelBundle.fromJson(dummyModel("gbdt").toJson()).horizon(10)!!
+        check("jsonTrees", gj.kind == "gbdt" && gj.trees.size == 2 && gj.trees[0].value.contentEquals(dummyModel("gbdt").horizon(10)!!.trees[0].value))
         check("jsonStats", back.horizon(10)!!.stats["BUY"]?.n == 1200)
         val parsed = MiniJson.parse("""{"a":[1,2.5,-3e2,null,true],"b":{"c":"x\"yå"}}""").obj()
         check("jsonParse", parsed["b"].obj()["c"] == "x\"yå" && (parsed["a"] as List<*>)[2] == -300.0)

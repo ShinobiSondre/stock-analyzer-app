@@ -49,6 +49,14 @@ object Features {
         Def("fear_setup", "Fear-spike setup"),
         Def("tyler_buy", "Tyler buy stack (3+)"),
         Def("tyler_sell", "Tyler sell stack (3+)"),
+        // v2: short-term reversal relative to the market, lottery effect, fear momentum
+        Def("rel_ret5", "Last week vs S&P 500"),
+        Def("rel_ret21", "Last month vs S&P 500"),
+        Def("spy_ret5", "S&P 500 last week"),
+        Def("max_ret21", "Biggest up-day this month"),
+        Def("vix_chg5", "VIX change this week"),
+        Def("ret1", "Yesterday's move"),
+        Def("vol_signed", "Volume surge × direction"),
     )
     val NAMES = DEFS.map { it.key }
     val SIZE = DEFS.size
@@ -113,6 +121,19 @@ object Features {
         val leaderPb = above && leader && rsi < 40
         val fear = vixHigh && above && rsi < 50 && !spyDc
 
+        val spy5 = m?.spyRet5; val spy21 = m?.spyRet21
+        val relRet5 = if (spy5 != null && spy5 > -1) clamp(ret5 - ln(1 + spy5), -0.4, 0.4) else 0.0
+        val relRet21 = if (spy21 != null && spy21 > -1) clamp(ret21 - ln(1 + spy21), -0.6, 0.6) else 0.0
+        val spyRet5 = if (spy5 != null && spy5 > -1) clamp(ln(1 + spy5), -0.25, 0.25) else 0.0
+        var maxRet = 0.0
+        for (j in i - 20..i) { val p0 = s.close[j - 1]; if (p0 > 0) maxRet = maxOf(maxRet, s.close[j] / p0 - 1) }
+        val maxRet21 = clamp(maxRet, 0.0, 0.5)
+        val vix5 = m?.vix5
+        val vixChg = if (vix != null && vix5 != null && vix5 > 0) clamp(ln(vix / vix5), -1.0, 1.0) else 0.0
+        val p1 = s.close[i - 1]
+        val ret1 = if (p1 > 0) clamp(ln(c / p1), -0.3, 0.3) else 0.0
+        val volSigned = volRatio * (if (ret1 > 0) 1.0 else if (ret1 < 0) -1.0 else 0.0)
+
         val t = tyler ?: Tyler.read(s, i)
         val tBuy = (t?.buyHits ?: 0) >= 3
         val tSell = (t?.sellHits ?: 0) >= 3
@@ -124,6 +145,7 @@ object Features {
             dd, vol, pctB, macdN, diDiff, adxN, volRatio, obvBull, stochC,
             vixL, b(vixHigh), vixSpike, spyDd, b(spyDc), spyRet63,
             b(leaderPb), b(fear), b(tBuy), b(tSell),
+            relRet5, relRet21, spyRet5, maxRet21, vixChg, ret1, volSigned,
         )
     }
 

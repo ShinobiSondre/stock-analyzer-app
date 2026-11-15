@@ -19,6 +19,8 @@ import com.shinobisondre.stockanalyzer.engine.TylerResult
 import java.io.File
 import java.time.LocalDate
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -88,127 +90,168 @@ fun main(args: Array<String>) {
     if (failures.isNotEmpty()) report.appendLine("* Download failures (skipped): ${failures.keys.sorted().joinToString(", ")}")
     report.appendLine()
 
+    val years = IntArray(ds.rows) { ds.date[it] / 10000 }
+    val distinctYears = years.distinct().sorted()
+    val firstTestYear = (distinctYears.firstOrNull() ?: 2010) + 5
+    val testYears = distinctYears.filter { it >= firstTestYear }
+    val binner = Binner(ds.x, ds.rows, Features.SIZE, (0 until ds.rows).filter { ds.group[it] == 0 }.toIntArray())
+    val gbParams = GbdtParams()
+    val kinds = listOf("rules", "logistic", "gbdt")
+    report.appendLine("Three predictors compete on identical out-of-sample rows. Each one's raw score is mapped to a probability by a monotone calibration fitted on the *other* years (leave-one-year-out), so all three are judged as calibrated probabilities. The one with the lowest Brier score on US stocks ships in the app.")
+    report.appendLine()
+
     for (h in listOf(5, 10, 22)) {
         println("── Horizon $h ──")
         val y = BooleanArray(ds.rows) { ds.ret(h, it).let { r -> !r.isNaN() && r > 0 } }
         val has = BooleanArray(ds.rows) { !ds.ret(h, it).isNaN() }
-        val oos = DoubleArray(ds.rows) { Double.NaN }
-        val years = dates.map { it / 10000 }.distinct().sorted()
-        val firstTestYear = (years.firstOrNull() ?: 2010) + 5
-        for (yr in years.filter { it >= firstTestYear }) {
+        val raw = kinds.associateWith { DoubleArray(ds.rows) { Double.NaN } }
+        for (yr in testYears) {
             val cutoff = (yr - 1) * 10000 + 1115 // label must end before Jan 1 (22 sessions ≈ 6 weeks)
             val train = (0 until ds.rows).filter { ds.group[it] == 0 && has[it] && ds.date[it] < cutoff }.toIntArray()
-            val test = (0 until ds.rows).filter { has[it] && ds.date[it] / 10000 == yr }
+            val test = (0 until ds.rows).filter { has[it] && years[it] == yr }
             if (train.size < 5000 || test.isEmpty()) continue
-            val m = Logistic(Features.SIZE).fit(ds.x, y, train)
-            for (r in test) oos[r] = m.prob(ds.x, r)
+            val lm = Logistic(Features.SIZE).fit(ds.x, y, train)
+            val gm = Gbdt.fit(binner, y, train, gbParams.copy(seed = yr.toLong()))
+            for (r in test) {
+                raw["rules"]!![r] = ds.rules[r].toDouble()
+                raw["logistic"]!![r] = lm.prob(ds.x, r).let { ln(it / (1 - it)) }
+                raw["gbdt"]!![r] = gm.raw(ds.row(r))
+            }
             println("  $yr: train ${train.size}, test ${test.size}")
         }
-        val finalRows = (0 until ds.rows).filter { ds.group[it] == 0 && has[it] }.toIntArray()
-        val fin = Logistic(Features.SIZE).fit(ds.x, y, finalRows)
-
-        // Rows with an out-of-sample prediction, by group.
-        val oosRows = (0 until ds.rows).filter { !oos[it].isNaN() }
+        val oosRows = (0 until ds.rows).filter { !raw["rules"]!![it].isNaN() }
         val usRows = oosRows.filter { ds.group[it] <= 1 }
         val baseRate = usRows.count { y[it] }.toDouble() / usRows.size.coerceAtLeast(1)
         val meanRetAll = usRows.map { ds.ret(h, it) }.average()
 
-        val levels = doubleArrayOf(0.97, 0.90, 0.80, 0.10, 0.03)
-        val oosP = usRows.map { oos[it] }.toDoubleArray()
-        val qOos = levels.map { Metrics.quantile(oosP, it) }
-        fun labelOf(p: Double, q: List<Double>): Int = when {
-            p >= q[0] -> 0; p >= q[1] -> 1; p >= q[2] -> 2; p <= q[4] -> 6; p <= q[3] -> 5; else -> 3
+        // Leave-one-year-out calibrated probabilities for every kind (US rows fit the maps; Oslo only evaluated).
+        val cal = kinds.associateWith { DoubleArray(ds.rows) { Double.NaN } }
+        val baseLoyo = DoubleArray(ds.rows) { Double.NaN }
+        for (yr in testYears) {
+            val fitRows = usRows.filter { years[it] != yr }
+            val applyRows = oosRows.filter { years[it] == yr }
+            if (fitRows.isEmpty() || applyRows.isEmpty()) continue
+            val yy = BooleanArray(fitRows.size) { y[fitRows[it]] }
+            val br = yy.count { it }.toDouble() / yy.size
+            for (r in applyRows) baseLoyo[r] = br
+            for (kd in kinds) {
+                val (cx, cy) = Calib.fit(DoubleArray(fitRows.size) { raw[kd]!![fitRows[it]] }, yy)
+                for (r in applyRows) cal[kd]!![r] = Calib.apply(cx, cy, raw[kd]!![r])
+            }
         }
-        val names = listOf("STRONG_BUY", "BUY", "WEAK_BUY", "HOLD", "?", "WEAK_SELL", "SELL")
-        val buckets = usRows.groupBy { labelOf(oos[it], qOos) }
+        fun eval(kd: String, rows: List<Int>): Map<String, Double> {
+            if (rows.isEmpty()) return emptyMap()
+            val p = DoubleArray(rows.size) { cal[kd]!![rows[it]] }
+            val yy = BooleanArray(rows.size) { y[rows[it]] }
+            val b = DoubleArray(rows.size) { baseLoyo[rows[it]] }
+            val rw = DoubleArray(rows.size) { raw[kd]!![rows[it]] }
+            val order = rows.indices.sortedBy { rw[it] }
+            val top = order.takeLast(rows.size / 10); val bottom = order.take(rows.size / 10)
+            val brier = Metrics.brier(p, yy); val brierBase = Metrics.brier(b, yy)
+            return linkedMapOf("n" to rows.size.toDouble(), "auc" to Metrics.auc(rw, yy), "brier" to brier, "brierBase" to brierBase,
+                "skill" to 1 - brier / brierBase, "top10" to top.count { yy[it] }.toDouble() / top.size.coerceAtLeast(1),
+                "bottom10" to bottom.count { yy[it] }.toDouble() / bottom.size.coerceAtLeast(1), "upRate" to yy.count { it }.toDouble() / rows.size)
+        }
+        val evalUs = kinds.associateWith { eval(it, usRows) }
+        val evalHold = kinds.associateWith { eval(it, oosRows.filter { r -> ds.group[r] == 1 }) }
+        val evalOslo = kinds.associateWith { eval(it, oosRows.filter { r -> ds.group[r] == 2 }) }
+        // Simplest kind wins unless a more complex one is clearly better.
+        var chosen = "rules"
+        for (kd in listOf("logistic", "gbdt")) if ((evalUs[kd]!!["brier"] ?: 1.0) < (evalUs[chosen]!!["brier"] ?: 1.0) - 0.00005) chosen = kd
+        println("  chosen: $chosen  " + kinds.joinToString { "$it brier=${f4(evalUs[it]!!["brier"])} auc=${f3(evalUs[it]!!["auc"])}" })
+
+        // Shipped calibration: all US out-of-sample rows.
+        val (cx, cy) = Calib.fit(DoubleArray(usRows.size) { raw[chosen]!![usRows[it]] }, BooleanArray(usRows.size) { y[usRows[it]] })
+        val pcal = cal[chosen]!!
+        val usP = usRows.map { pcal[it] }.toDoubleArray()
+        // Labels: quantile cut-offs, but never closer to the base rate than a minimum edge.
+        val th = Thresholds(
+            strong = max(Metrics.quantile(usP, 0.97), baseRate + 0.04),
+            buy = max(Metrics.quantile(usP, 0.90), baseRate + 0.02),
+            weak = max(Metrics.quantile(usP, 0.80), baseRate + 0.01),
+            weakSell = min(Metrics.quantile(usP, 0.10), baseRate - 0.01),
+            sell = min(Metrics.quantile(usP, 0.03), baseRate - 0.03),
+        )
+        fun bucket(p: Double): Int = when { p >= th.strong -> 0; p >= th.buy -> 1; p >= th.weak -> 2; p <= th.sell -> 6; p <= th.weakSell -> 5; else -> 3 }
+        val buckets = usRows.groupBy { bucket(pcal[it]) }
         fun statOf(rs: List<Int>): LabelStat {
             val rets = rs.map { ds.ret(h, it) }
             return LabelStat(rs.size, rs.count { y[it] }.toDouble() / rs.size.coerceAtLeast(1), rets.average() * 100, (rets.average() - meanRetAll) * 100)
         }
         val sellReal = (buckets[6]?.let { statOf(it).upRate } ?: 1.0) < 0.5
         val weakSellReal = (buckets[5]?.let { statOf(it).upRate } ?: 1.0) < 0.5
+        val names = listOf("STRONG_BUY", "BUY", "WEAK_BUY", "HOLD", "?", "WEAK_SELL", "SELL")
         val stats = LinkedHashMap<String, LabelStat>()
-        buckets.toSortedMap().forEach { (lab, rs) ->
-            val key = when (lab) { 5 -> if (weakSellReal) "WEAK_SELL" else "AVOID_WEAK"; 6 -> if (sellReal) "SELL" else "AVOID"; else -> names[lab] }
-            stats[key] = statOf(rs)
-        }
-        // AVOID as a whole (both bottom buckets when neither is a real sell)
-        if (!sellReal || !weakSellReal) {
-            val avoidRows = (if (!sellReal) buckets[6].orEmpty() else emptyList()) + (if (!weakSellReal) buckets[5].orEmpty() else emptyList())
-            if (avoidRows.isNotEmpty()) stats["AVOID"] = statOf(avoidRows)
-            stats.remove("AVOID_WEAK")
-        }
-
-        // Shipped thresholds: same quantile levels, on the final model's own predictions.
-        val finP = (0 until ds.rows).filter { ds.group[it] <= 1 }.map { fin.prob(ds.x, it) }.toDoubleArray()
-        val qFin = levels.map { Metrics.quantile(finP, it) }
+        for (lab in listOf(0, 1, 2, 3)) buckets[lab]?.let { stats[names[lab]] = statOf(it) }
+        if (weakSellReal) buckets[5]?.let { stats["WEAK_SELL"] = statOf(it) }
+        if (sellReal) buckets[6]?.let { stats["SELL"] = statOf(it) }
+        val avoidRows = (if (!weakSellReal) buckets[5].orEmpty() else emptyList()) + (if (!sellReal) buckets[6].orEmpty() else emptyList())
+        if (avoidRows.isNotEmpty()) stats["AVOID"] = statOf(avoidRows)
 
         // 80% band calibration: |log return| / (σ·√h).
         val zs = usRows.mapNotNull { r -> val v = ds.vol[r]; if (v > 0) abs(ln(1 + ds.ret(h, r))) / (v * sqrt(h.toDouble())) else null }.toDoubleArray()
         val intervalK = Metrics.quantile(zs, 0.80) / 1.2816
         val inside = zs.count { it <= 1.2816 * intervalK }.toDouble() / zs.size.coerceAtLeast(1)
 
-        // Metrics by group + legacy comparison.
-        fun groupMetrics(rows: List<Int>): Map<String, Double> {
-            if (rows.isEmpty()) return emptyMap()
-            val p = rows.map { oos[it] }.toDoubleArray(); val yy = BooleanArray(rows.size) { y[rows[it]] }
-            val base = DoubleArray(rows.size) { baseRate }
-            val legacy = rows.map { ds.rules[it].toDouble() }.toDoubleArray()
-            return linkedMapOf("n" to rows.size.toDouble(), "auc" to Metrics.auc(p, yy), "aucRules" to Metrics.auc(legacy, yy),
-                "brier" to Metrics.brier(p, yy), "brierBase" to Metrics.brier(base, yy), "logloss" to Metrics.logloss(p, yy), "loglossBase" to Metrics.logloss(base, yy),
-                "upRate" to yy.count { it }.toDouble() / rows.size)
-        }
-        val mDisc = groupMetrics(oosRows.filter { ds.group[it] == 0 })
-        val mHold = groupMetrics(oosRows.filter { ds.group[it] == 1 })
-        val mOslo = groupMetrics(oosRows.filter { ds.group[it] == 2 })
-        val mUs = groupMetrics(usRows)
-
-        // Calibration deciles (US OOS).
-        val sorted = usRows.sortedBy { oos[it] }
+        // Reliability deciles of the shipped (LOYO-calibrated) probabilities.
+        val sorted = usRows.sortedBy { pcal[it] }
         val calib = (0 until 10).mapNotNull { d ->
             val part = sorted.subList(d * sorted.size / 10, (d + 1) * sorted.size / 10)
-            if (part.isEmpty()) null else doubleArrayOf(part.map { oos[it] }.average(), part.count { y[it] }.toDouble() / part.size, part.size.toDouble())
+            if (part.isEmpty()) null else doubleArrayOf(part.map { pcal[it] }.average(), part.count { y[it] }.toDouble() / part.size, part.size.toDouble())
         }
 
+        // Final model of the chosen kind, fitted on all discovery rows.
+        val finalRows = (0 until ds.rows).filter { ds.group[it] == 0 && has[it] }.toIntArray()
+        var lmF: Logistic? = null; var gmF: GbdtModel? = null
+        when (chosen) {
+            "logistic" -> lmF = Logistic(Features.SIZE).fit(ds.x, y, finalRows)
+            "gbdt" -> gmF = Gbdt.fit(binner, y, finalRows, gbParams)
+        }
+        val ev = evalUs[chosen]!!
         val metrics = linkedMapOf(
-            "auc" to (mUs["auc"] ?: Double.NaN), "aucHoldout" to (mHold["auc"] ?: Double.NaN), "aucOslo" to (mOslo["auc"] ?: Double.NaN),
-            "aucRules" to (mUs["aucRules"] ?: Double.NaN), "brier" to (mUs["brier"] ?: Double.NaN), "brierBase" to (mUs["brierBase"] ?: Double.NaN),
-            "intervalCoverage" to inside, "oosRows" to usRows.size.toDouble(),
+            "auc" to (ev["auc"] ?: Double.NaN), "brier" to (ev["brier"] ?: Double.NaN), "brierBase" to (ev["brierBase"] ?: Double.NaN),
+            "skill" to (ev["skill"] ?: Double.NaN), "aucHoldout" to (evalHold[chosen]!!["auc"] ?: Double.NaN),
+            "aucOslo" to (evalOslo[chosen]!!["auc"] ?: Double.NaN), "aucRules" to (evalUs["rules"]!!["auc"] ?: Double.NaN),
+            "brierRules" to (evalUs["rules"]!!["brier"] ?: Double.NaN), "intervalCoverage" to inside, "oosRows" to usRows.size.toDouble(),
         )
         horizons += HorizonModel(
-            days = h, featureNames = Features.NAMES, mean = fin.mean, std = fin.std,
-            coef = fin.beta.copyOfRange(1, fin.beta.size), intercept = fin.beta[0], baseRate = baseRate,
-            thresholds = Thresholds(qFin[0], qFin[1], qFin[2], qFin[3], qFin[4]), sellReal = sellReal, weakSellReal = weakSellReal,
+            days = h, kind = chosen, featureNames = Features.NAMES,
+            mean = lmF?.mean ?: DoubleArray(0), std = lmF?.std ?: DoubleArray(0),
+            coef = lmF?.beta?.copyOfRange(1, lmF.beta.size) ?: DoubleArray(0), intercept = lmF?.beta?.get(0) ?: 0.0,
+            trees = gmF?.trees ?: emptyList(), baseScore = gmF?.base ?: 0.0,
+            calX = cx, calY = cy, baseRate = baseRate, thresholds = th, sellReal = sellReal, weakSellReal = weakSellReal,
             intervalK = intervalK, stats = stats, metrics = metrics, calibration = calib,
         )
 
         // ── Report section ──
         report.appendLine("## ${h} trading days (${mapOf(5 to "1 week", 10 to "2 weeks", 22 to "1 month")[h]})")
         report.appendLine()
-        report.appendLine("Base rate (share of all US stock-days higher after $h sessions): **${pc(baseRate)}**.")
+        report.appendLine("Base rate (share of US stock-days higher after $h sessions): **${pc(baseRate)}**. Shipped predictor: **$chosen**.")
         report.appendLine()
-        report.appendLine("| Set | rows | AUC model | AUC old rules score | Brier model | Brier base rate | up-rate |")
-        report.appendLine("|---|---:|---:|---:|---:|---:|---:|")
-        for ((name, mm) in listOf("Discovery (time OOS)" to mDisc, "Holdout tickers" to mHold, "Oslo (out of domain)" to mOslo)) {
-            if (mm.isEmpty()) continue
-            report.appendLine("| $name | ${"%,d".format(mm["n"]!!.toInt())} | ${f3(mm["auc"])} | ${f3(mm["aucRules"])} | ${f4(mm["brier"])} | ${f4(mm["brierBase"])} | ${pc(mm["upRate"]!!)} |")
+        report.appendLine("| Predictor | set | AUC | Brier | Brier (base rate) | skill | top-10% up-rate | bottom-10% up-rate |")
+        report.appendLine("|---|---|---:|---:|---:|---:|---:|---:|")
+        for ((setName, evals) in listOf("US (all OOS)" to evalUs, "Holdout tickers" to evalHold, "Oslo" to evalOslo)) {
+            for (kd in kinds) {
+                val e = evals[kd]!!
+                if (e.isEmpty()) continue
+                report.appendLine("| ${if (kd == chosen) "**$kd**" else kd} | $setName | ${f3(e["auc"])} | ${f4(e["brier"])} | ${f4(e["brierBase"])} | ${pcSigned(e["skill"])} | ${pc(e["top10"]!!)} | ${pc(e["bottom10"]!!)} |")
+            }
         }
         report.appendLine()
-        report.appendLine("AUC 0.5 = coin flip. Brier below the base-rate Brier = the probabilities carry information beyond \"stocks usually go up\".")
+        report.appendLine("AUC 0.5 = coin flip. Skill = 1 − Brier / Brier(base rate): above 0 means the probabilities beat \"stocks usually go up\".")
         report.appendLine()
-        report.appendLine("**Calls (US, out of sample):**")
+        report.appendLine("**Calls with the shipped predictor (US, out of sample):**")
         report.appendLine()
-        report.appendLine("| Call | share | n | % higher after $h d | avg return | vs all stocks |")
-        report.appendLine("|---|---:|---:|---:|---:|---:|")
-        for ((k, s) in stats) report.appendLine("| ${k.replace('_', ' ')} | ${pc(s.n.toDouble() / usRows.size)} | ${"%,d".format(s.n)} | ${pc(s.upRate)} | ${f2(s.meanRetPct)}% | ${if (s.excessPct >= 0) "+" else ""}${f2(s.excessPct)} pts |")
+        report.appendLine("| Call | threshold | share | n | % higher after $h d | avg return | vs all stocks |")
+        report.appendLine("|---|---:|---:|---:|---:|---:|---:|")
+        val thOf = mapOf("STRONG_BUY" to "≥ ${pc(th.strong)}", "BUY" to "≥ ${pc(th.buy)}", "WEAK_BUY" to "≥ ${pc(th.weak)}", "HOLD" to "—",
+            "WEAK_SELL" to "≤ ${pc(th.weakSell)}", "SELL" to "≤ ${pc(th.sell)}", "AVOID" to "≤ ${pc(th.weakSell)}")
+        for ((k2, st) in stats) report.appendLine("| ${k2.replace('_', ' ')} | ${thOf[k2]} | ${pc(st.n.toDouble() / usRows.size)} | ${"%,d".format(st.n)} | ${pc(st.upRate)} | ${f2(st.meanRetPct)}% | ${if (st.excessPct >= 0) "+" else ""}${f2(st.excessPct)} pts |")
         report.appendLine()
-        // Legacy rules engine comparison on the same rows.
         val legacyBull = usRows.filter { ds.rulesCall[it] <= 2 }
-        val newBull = usRows.filter { labelOf(oos[it], qOos) <= 2 }
-        report.appendLine("Old rules engine, same rows: bullish calls ${pc(legacyBull.size.toDouble() / usRows.size)} of days, ${pc(legacyBull.count { y[it] }.toDouble() / legacyBull.size.coerceAtLeast(1))} higher after $h d. " +
-            "New model: bullish calls ${pc(newBull.size.toDouble() / usRows.size)} of days, ${pc(newBull.count { y[it] }.toDouble() / newBull.size.coerceAtLeast(1))} higher.")
+        report.appendLine("For reference, the old rules engine's own BUY labels (unchanged thresholds) fired on ${pc(legacyBull.size.toDouble() / usRows.size)} of days and were higher after $h d ${pc(legacyBull.count { y[it] }.toDouble() / legacyBull.size.coerceAtLeast(1))} of the time.")
         report.appendLine()
-        report.appendLine("**Calibration** (predicted vs realised, deciles):")
+        report.appendLine("**Calibration** (shipped predictor, predicted vs realised, deciles):")
         report.appendLine()
         report.appendLine("| decile | mean predicted | realised | n |")
         report.appendLine("|---:|---:|---:|---:|")
@@ -216,25 +259,28 @@ fun main(args: Array<String>) {
         report.appendLine()
         report.appendLine("**By period** (bullish calls vs that period's base rate):")
         report.appendLine()
-        report.appendLine("| period | base up-rate | new bullish: n / % up | old bullish: n / % up |")
+        report.appendLine("| period | base up-rate | shipped bullish: n / % up | old rules bullish: n / % up |")
         report.appendLine("|---|---:|---:|---:|")
         for ((era, from, to) in ERAS) {
             val rs = usRows.filter { ds.date[it] in from..to }
             if (rs.size < 500) continue
-            val nb = rs.filter { labelOf(oos[it], qOos) <= 2 }; val ob = rs.filter { ds.rulesCall[it] <= 2 }
+            val nb = rs.filter { bucket(pcal[it]) <= 2 }; val ob = rs.filter { ds.rulesCall[it] <= 2 }
             report.appendLine("| $era | ${pc(rs.count { y[it] }.toDouble() / rs.size)} | ${"%,d".format(nb.size)} / ${pc(nb.count { y[it] }.toDouble() / nb.size.coerceAtLeast(1))} | ${"%,d".format(ob.size)} / ${pc(ob.count { y[it] }.toDouble() / ob.size.coerceAtLeast(1))} |")
         }
         report.appendLine()
         report.appendLine("80% price band: width multiplier ${f3(intervalK)} × σ√h covers ${pc(inside)} of outcomes.")
         report.appendLine()
-        report.appendLine("<details><summary>Coefficients (standardised log-odds)</summary>")
-        report.appendLine()
-        report.appendLine("| feature | coef |")
-        report.appendLine("|---|---:|")
-        Features.DEFS.indices.sortedByDescending { abs(fin.beta[it + 1]) }.forEach { report.appendLine("| ${Features.DEFS[it].label} (`${Features.DEFS[it].key}`) | ${f3(fin.beta[it + 1])} |") }
-        report.appendLine()
-        report.appendLine("</details>")
-        report.appendLine()
+        if (gmF != null) {
+            report.appendLine("<details><summary>Feature importance (total split gain)</summary>")
+            report.appendLine()
+            report.appendLine("| feature | share of gain |")
+            report.appendLine("|---|---:|")
+            val tg = gmF.gain.sum().coerceAtLeast(1e-12)
+            Features.DEFS.indices.sortedByDescending { gmF.gain[it] }.take(20).forEach { report.appendLine("| ${Features.DEFS[it].label} (`${Features.DEFS[it].key}`) | ${pc(gmF.gain[it] / tg)} |") }
+            report.appendLine()
+            report.appendLine("</details>")
+            report.appendLine()
+        }
     }
 
     report.appendLine("## Caveats")
@@ -248,7 +294,7 @@ fun main(args: Array<String>) {
         version = "m" + LocalDate.now().toString().replace("-", "") + (if (synthetic) "-synthetic" else ""),
         trainedAt = java.time.Instant.now().toString(), dataFrom = dataFrom, dataTo = dataTo,
         trainTickers = ds.countSymbols(0), holdoutTickers = ds.countSymbols(1), horizons = horizons,
-        notes = "Logistic model per horizon on ${Features.SIZE} features; thresholds at the 97/90/80/10/3 percentiles of predictions.",
+        notes = "Per horizon the best of rules / logistic / gradient-boosted trees by out-of-sample Brier score, with a monotone calibration map. Call thresholds at the 97/90/80/10/3 percentiles of calibrated probabilities, never closer than 1-4 points to the base rate.",
     )
     File(out, "model.json").writeText(bundle.toJson())
     File(out, "MODEL_REPORT.md").writeText(report.toString())
@@ -263,6 +309,7 @@ private val ERAS = listOf(
 )
 
 private fun pc(v: Double) = if (v.isNaN()) "—" else "%.1f%%".format(v * 100)
+private fun pcSigned(v: Double?) = if (v == null || v.isNaN()) "—" else "%+.2f%%".format(v * 100)
 private fun f2(v: Double?) = if (v == null || v.isNaN()) "—" else "%.2f".format(v)
 private fun f3(v: Double?) = if (v == null || v.isNaN()) "—" else "%.3f".format(v)
 private fun f4(v: Double?) = if (v == null || v.isNaN()) "—" else "%.4f".format(v)
@@ -286,6 +333,7 @@ class DataBuilder(private val market: MarketSeries) {
     val vol: FloatArray get() = volL.a
     val rules: FloatArray get() = rulesL.a
     val rulesCall: IntArray get() = rulesCallL.a
+    fun row(r: Int): DoubleArray = DoubleArray(k) { xs.a[r * k + it].toDouble() }
     fun ret(h: Int, r: Int): Double = when (h) { 5 -> r5[r]; 10 -> r10[r]; else -> r22[r] }.toDouble()
     fun countSymbols(g: Int) = symbolGroup.count { it == g }
 

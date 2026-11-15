@@ -71,22 +71,29 @@ object Analyzer {
         val rules = Rules.evaluate(ind, pats, m, tyler)
         val usable = model?.takeIf { it.compatible }
         // The model always sees news-free Tyler reads — that is how it was trained.
-        val x = if (usable != null) Features.build(s, i, m, Tyler.read(s, i)) else null
+        val x = if (usable != null && usable.horizons.any { it.needsFeatures }) Features.build(s, i, m, Tyler.read(s, i)) else null
         val vol = ind.dailyVol
 
         val forecasts = HORIZONS.map { (days, label) ->
             val hm = usable?.horizon(days)
             val target = TradingDays.addTradingDays(s.dates[i], days)
-            if (hm != null && x != null) {
-                val p = hm.probability(x)
+            val p = hm?.probability(x, rules.rawScore)
+            if (hm != null && p != null) {
                 val call = hm.call(p)
                 val band = vol?.let { hm.band(ind.lastClose, it) }
-                val contrib = hm.contributions(x)
-                val drivers = contrib.indices
-                    .map { Driver(Features.DEFS[it].key, Features.DEFS[it].label, contrib[it]) }
-                    .filter { abs(it.logOdds) > 0.01 }
-                    .sortedByDescending { abs(it.logOdds) }
-                    .take(6)
+                val drivers = if (hm.needsFeatures && x != null) {
+                    val contrib = hm.contributions(x)
+                    contrib.indices
+                        .map { Driver(Features.DEFS[it].key, Features.DEFS[it].label, contrib[it]) }
+                        .filter { abs(it.logOdds) > 0.002 }
+                        .sortedByDescending { abs(it.logOdds) }
+                        .take(6)
+                } else {
+                    rules.signals.filter { it.scored && it.score != 0.0 }
+                        .sortedByDescending { abs(it.score * it.weight) }
+                        .take(6)
+                        .map { Driver(it.name, "${it.name}: ${it.label}", it.score * it.weight / 10) }
+                }
                 HorizonForecast(days, label, p, hm.baseRate, call, hm.stats[call.name], band?.first, band?.second, drivers, target)
             } else {
                 // Rules fallback: same call for every horizon, ATR-free vol band (±1.28σ√h).
@@ -95,8 +102,9 @@ object Analyzer {
             }
         }
 
+        val fromModel = forecasts.first { it.days == PRIMARY }.probability != null
         val primary = forecasts.first { it.days == PRIMARY }
-        val verdict = verdictOf(primary, rules, usable != null && x != null)
+        val verdict = verdictOf(primary, rules, fromModel)
         val holding = holdingGuidance(forecasts, primary.call)
         val summary = Summaries.build(symbol, ind, pats, lv, tyler, rules, m, primary)
         return Analysis(symbol, s, ind, pats, lv, tyler, rules, forecasts, verdict, holding, m, x, usable?.version, summary)

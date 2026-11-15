@@ -18,6 +18,10 @@ data class MarketPoint(
     val spyRet12_1: Double?,
     val spyRet63: Double?,
     val spyDrift60Pct: Double?,
+    val spyRet5: Double? = null,
+    val spyRet21: Double? = null,
+    /** VIX five sessions earlier (for the 1-week change in fear). */
+    val vix5: Double? = null,
 ) {
     val indexDeathCross: Boolean get() = spySma50 != null && spySma200 != null && spySma50 < spySma200
     val spyAbove200: Boolean? get() = spySma200?.let { spyClose > it }
@@ -104,6 +108,9 @@ class MarketSeries(spy: List<Candle>, vix: List<Candle>) {
             spyRet12_1 = spySeries.ret12_1(i),
             spyRet63 = spySeries.ret(i, 63),
             spyDrift60Pct = spySeries.ret(i, 60)?.let { it * 100 },
+            spyRet5 = spySeries.ret(i, 5),
+            spyRet21 = spySeries.ret(i, 21),
+            vix5 = if (vixOk && vi >= 5) vixClose[vi - 5] else null,
         )
     }
 
