@@ -50,4 +50,23 @@ The web app's comments already did a lot right (it re-fitted on 21 years and two
 1. **One pipeline, tested twice.** Indicators are re-implemented in pure Kotlin and checked against the `technicalindicators` npm package on the same data (`EngineSelfTest`, 64 checks). The trainer and the phone build features with the same code.
 2. **Fair competition.** The trainer predicts every year 2010→2026 with models fitted only on earlier data, for 172 US tickers (82 never used for fitting) and 24 Oslo tickers. Three predictors compete on identical rows: the old rules score, a logistic model and gradient-boosted trees. Each is calibrated (leave-one-year-out) and the lowest Brier score ships.
 3. **Calibrated output.** The number on screen is "how often stocks in this situation were higher N sessions later", not an agreement heuristic. Labels (BUY etc.) are only issued when the calibrated probability beats the base rate by at least 1–4 points, and each label shows its own out-of-sample hit rate.
-4. **Honesty about limits.** The first real run showed a plain logistic model did *not* beat the rules engine (AUC ≈ 0.50, Brier worse than the base rate). That result is why the competition exists — see `MODEL_REPORT.md` for the current numbers.
+4. **Two targets.** "Will it be higher?" is mostly the market moving. "Will it beat the S&P 500?" isolates stock-picking skill and is reported separately.
+5. **Honesty about limits.** The first real run showed a plain logistic model did *not* beat the rules engine (AUC ≈ 0.50, Brier worse than the base rate). That result is why the competition exists.
+
+### Result (model m20261115, out of sample 2010–2026, ~660k US stock-days per horizon)
+
+| Target | Horizon | Winner | AUC | What the app's labels did |
+|---|---|---|---:|---|
+| Price higher | 1 week | rules (calibrated) | 0.508 | BUY: 58.7% higher vs 54.8% base (n=28k) |
+| Price higher | 2 weeks | rules (calibrated) | 0.505 | BUY: 60.4% vs 56.4% (n=25k), avg +1.33% vs +0.73% |
+| Price higher | 1 month | rules (calibrated) | 0.505 | BUY: 62.6% vs 58.4% (n=27k), avg +2.87% vs +1.62% |
+| Beat S&P 500 | 1 week | gradient-boosted trees | 0.515 | STRONG BUY 55.5% beat · BUY 53.0% · SELL 45.7% (base 50.1%) |
+| Beat S&P 500 | 2 weeks | rules | 0.504 | BUY 53.6% vs 50.2% |
+| Beat S&P 500 | 1 month | rules | 0.502 | WEAK BUY 51.8% vs 50.5% |
+
+What that means in practice:
+
+* The web app's BUY signal was real — about 4 points better than a random stock at 2 weeks — and the port keeps it, now with its measured hit rate on screen.
+* Its STRONG BUY, WEAK BUY and SELL/AVOID tiers were **not** better than average out of sample, so the app no longer issues them for "price higher". The old heuristic confidence (often 70–88%) overstated certainty; calibrated probabilities sit within a few points of the base rate because that is what the data supports.
+* Logistic regression and boosted trees on 39 features could not beat the rules score for direction — a strong hint that single-stock direction at these horizons is close to unpredictable from price data. They do add a little for **relative** performance at 1 week, which is shown as "beats S&P 500" odds.
+* Results held on 82 tickers never used for fitting and roughly held on Oslo Børs (out of domain).

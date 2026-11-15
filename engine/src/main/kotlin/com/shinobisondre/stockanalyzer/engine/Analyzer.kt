@@ -93,10 +93,11 @@ object Analyzer {
                         .sortedByDescending { abs(it.logOdds) }
                         .take(6)
                 } else {
-                    rules.signals.filter { it.scored && it.score != 0.0 }
+                    // Only reads that actually lean one way (|score| ≥ 0.25 is the "not neutral" cut-off).
+                    rules.signals.filter { it.scored && abs(it.score) >= 0.25 }
                         .sortedByDescending { abs(it.score * it.weight) }
                         .take(6)
-                        .map { Driver(it.name, "${it.name}: ${it.label}", it.score * it.weight / 10) }
+                        .map { Driver(it.name, "${it.name} — ${it.label}", it.score * it.weight / 10) }
                 }
                 val bm = usable?.horizon(days, "beat")
                 val bp = bm?.probability(x, rules.rawScore)
@@ -139,8 +140,9 @@ object Analyzer {
             val bb = f.beatBase ?: 0.5
             parts += "Odds of beating the S&P 500 over the same window: ${(bp * 100).roundToInt()}% (typical ${(bb * 100).roundToInt()}%)."
         }
-        val up = f.drivers.filter { it.logOdds > 0 }.take(2).joinToString(", ") { it.label.lowercase() }
-        val dn = f.drivers.filter { it.logOdds < 0 }.take(2).joinToString(", ") { it.label.lowercase() }
+        fun short(d: Driver) = d.label.substringBefore(" — ").lowercase()
+        val up = f.drivers.filter { it.logOdds > 0 }.take(2).joinToString(", ") { short(it) }
+        val dn = f.drivers.filter { it.logOdds < 0 }.take(2).joinToString(", ") { short(it) }
         if (up.isNotEmpty()) parts += "Helping: $up."
         if (dn.isNotEmpty()) parts += "Hurting: $dn."
         rules.setups.firstOrNull { it.kind == SetupKind.FALLING_KNIFE }?.let { parts += "Caution: ${it.detail}" }
