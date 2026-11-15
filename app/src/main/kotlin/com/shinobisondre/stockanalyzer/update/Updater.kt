@@ -1,7 +1,10 @@
 package com.shinobisondre.stockanalyzer.update
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -84,6 +87,44 @@ object Updater {
         }
     }
 
+    /** The downloaded APK for [rel], if it is already on disk and complete. */
+    fun downloaded(ctx: Context, rel: Release): File? =
+        File(File(ctx.cacheDir, "updates"), "StockAnalyzer-${rel.versionName}.apk").takeIf { it.exists() && (rel.size <= 0 || it.length() == rel.size) }
+
+    /** True while this app's screen is visible (set by MainActivity). */
+    @Volatile var foreground: Boolean = false
+    /** Set while the photo picker (or another screen we opened) is up — don't restart the app under it. */
+    @Volatile var holdInstall: Boolean = false
+
+    /**
+     * Installs through a PackageInstaller session. On Android 12+ an app may update
+     * itself without the "Do you want to install this update?" prompt
+     * (USER_ACTION_NOT_REQUIRED + UPDATE_PACKAGES_WITHOUT_USER_ACTION). If Android
+     * still wants confirmation, [InstallReceiver] shows its prompt (or a
+     * notification when the app is in the background).
+     */
+    fun installSession(ctx: Context, apk: File, versionName: String) {
+        val app = ctx.applicationContext
+        val installer = app.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(app.packageName)
+            setSize(apk.length())
+            if (Build.VERSION.SDK_INT >= 31) setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            if (Build.VERSION.SDK_INT >= 33) setPackageSource(PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE)
+        }
+        val id = installer.createSession(params)
+        installer.openSession(id).use { session ->
+            session.openWrite("base.apk", 0, apk.length()).use { out ->
+                apk.inputStream().use { it.copyTo(out) }
+                session.fsync(out)
+            }
+            app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("installing", versionName).apply()
+            val status = Intent(app, InstallReceiver::class.java).setAction(InstallReceiver.ACTION)
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+            session.commit(PendingIntent.getBroadcast(app, id, status, flags).intentSender)
+        }
+    }
+
     fun install(ctx: Context, apk: File) {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", apk)
         val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -91,5 +132,40 @@ object Updater {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         ctx.startActivity(intent)
+    }
+}
+
+/** Result of a self-update session. */
+class InstallReceiver : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) {
+        when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                val confirm: Intent = (if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                    else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT)) ?: return
+                confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (Updater.foreground) runCatching { ctx.startActivity(confirm) }
+                else Notifier.postIntent(ctx, Notifier.CH_UPDATES, 9002, "Finish updating StockAnalyzer", "Tap to install the downloaded update.",
+                    PendingIntent.getActivity(ctx, 9002, confirm, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            }
+            PackageInstaller.STATUS_SUCCESS -> Unit // this process is replaced; PackageReplacedReceiver runs in the new version
+            else -> {
+                val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "Install failed"
+                ctx.getSharedPreferences("updater", Context.MODE_PRIVATE).edit().putString("lastError", msg).remove("installing").apply()
+            }
+        }
+    }
+
+    companion object { const val ACTION = "com.shinobisondre.stockanalyzer.INSTALL_STATUS" }
+}
+
+/** Runs in the NEW version right after a self-update: say so, with a tap to reopen. */
+class PackageReplacedReceiver : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        val prefs = ctx.getSharedPreferences("updater", Context.MODE_PRIVATE)
+        val v = prefs.getString("installing", null) ?: return
+        prefs.edit().remove("installing").remove("lastError").apply()
+        File(ctx.cacheDir, "updates").listFiles()?.forEach { it.delete() }
+        Notifier.post(ctx, Notifier.CH_UPDATES, 9003, "StockAnalyzer updated to ${BuildConfig.VERSION_NAME}", "Tap to open.")
     }
 }

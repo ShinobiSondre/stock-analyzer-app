@@ -2,6 +2,7 @@ package com.shinobisondre.stockanalyzer
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -21,6 +22,7 @@ import com.shinobisondre.stockanalyzer.ui.FoldInfo
 import com.shinobisondre.stockanalyzer.ui.MainViewModel
 import com.shinobisondre.stockanalyzer.ui.Tab
 import com.shinobisondre.stockanalyzer.ui.theme.StockTheme
+import com.shinobisondre.stockanalyzer.update.Updater
 import com.shinobisondre.stockanalyzer.work.Notifier
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -34,7 +36,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        handleIntent(intent)
+        if (savedInstanceState == null) handleIntent(intent)
 
         // Hinge / posture of the Z Fold: drives the two-pane split and tabletop mode.
         lifecycleScope.launch {
@@ -65,6 +67,18 @@ class MainActivity : ComponentActivity() {
         vm.markOnboarded()
     }
 
+    override fun onStart() {
+        super.onStart()
+        Updater.foreground = true
+        vm.cancelBackgroundInstall()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Updater.foreground = false
+        if (!isChangingConfigurations) vm.scheduleBackgroundInstall()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
@@ -73,6 +87,23 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         intent ?: return
         intent.getStringExtra(EXTRA_SYMBOL)?.let { vm.open(it) }
+        // A screenshot shared from Nordnet (or the gallery): import the holdings on it.
+        if (intent.type?.startsWith("image/") == true) {
+            val uris: List<Uri> = when (intent.action) {
+                Intent.ACTION_SEND -> listOfNotNull(
+                    if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                )
+                Intent.ACTION_SEND_MULTIPLE -> (if (Build.VERSION.SDK_INT >= 33) intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    else @Suppress("DEPRECATION") intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)) ?: emptyList()
+                else -> emptyList()
+            }
+            if (uris.isNotEmpty()) {
+                vm.close()
+                vm.tab.value = Tab.PORTFOLIO
+                vm.importScreenshots(uris)
+            }
+        }
         if (intent.getBooleanExtra(EXTRA_UPDATE, false)) { vm.tab.value = Tab.SETTINGS; vm.checkUpdate() }
     }
 

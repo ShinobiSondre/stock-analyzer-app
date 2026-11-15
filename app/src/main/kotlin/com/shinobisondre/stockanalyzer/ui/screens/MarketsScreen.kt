@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -37,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,12 +92,23 @@ fun MarketsScreen(vm: MainViewModel) {
     val hits by vm.hits.collectAsStateWithLifecycle()
     var addOpen by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
+    val up by vm.update.collectAsStateWithLifecycle()
+    val splash by vm.splash.collectAsStateWithLifecycle()
+    val movers = remember(cores, st.holdings, st.watchlist) { vm.moversFromCores(cores) }
+    // Home page: look for an app update (throttled) and pop up today's quick win once.
+    LaunchedEffect(Unit) { vm.autoUpdate() }
+    LaunchedEffect(movers.map { it.symbol }) { vm.maybeSplash(movers) }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             ScreenHeader("Markets", "Odds-based analysis for your watchlist") {
                 IconButton(onClick = { vm.refreshAll() }) { Icon(Icons.Filled.Refresh, "Refresh") }
+                IconButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.SETTINGS }) { Icon(Icons.Filled.Settings, "Settings") }
             }
+        }
+        if (up.available != null) item { UpdateBanner(vm, up, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
+        if (movers.isNotEmpty()) item {
+            QuickWinBanner(movers, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }
         }
         item {
             OutlinedTextField(
@@ -154,6 +167,30 @@ fun MarketsScreen(vm: MainViewModel) {
         }
     }
 
+    splash?.let { list ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissSplash() },
+            icon = { Icon(BoltIcon, null, tint = Palette.warn) },
+            title = { Text(if (list.size == 1) "${list[0].symbol} is up ${F.pct(list[0].changePct, 1).removePrefix("+")} today" else "Quick wins today") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    list.forEach { w ->
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(w.symbol, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                ChangeText(w.changePct, size = 14)
+                            }
+                            ToneChip(w.advice?.lean?.title ?: "No history for this size of move", leanTone(w.advice?.lean), Modifier.padding(top = 4.dp))
+                            w.advice?.lines?.firstOrNull()?.let { Text(it, fontSize = 12.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp)) }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.dismissSplash(); vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }) { Text("See quick wins") } },
+            dismissButton = { TextButton(onClick = { vm.dismissSplash() }) { Text("Later") } },
+        )
+    }
+
     if (addOpen) {
         var text by remember { mutableStateOf("") }
         AlertDialog(
@@ -170,6 +207,31 @@ fun MarketsScreen(vm: MainViewModel) {
             confirmButton = { TextButton(onClick = { vm.addSymbolsToWatchlist(text); addOpen = false }) { Text("Add") } },
             dismissButton = { TextButton(onClick = { addOpen = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+fun UpdateBanner(vm: MainViewModel, up: com.shinobisondre.stockanalyzer.ui.UpdateState, modifier: Modifier = Modifier) {
+    val rel = up.available ?: return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    SectionCard("Update ${rel.versionName}", modifier) {
+        when {
+            up.installing -> Text("Installing — the app restarts in a moment.", fontSize = 13.sp)
+            up.progress != null -> {
+                Text("Downloading… ${((up.progress ?: 0f) * 100).toInt()}%", fontSize = 13.sp)
+                androidx.compose.material3.LinearProgressIndicator(progress = { up.progress ?: 0f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), color = Palette.accent)
+            }
+            !com.shinobisondre.stockanalyzer.update.Updater.canInstall(ctx) -> {
+                Text("Allow StockAnalyzer to install its own updates once — after that new versions install automatically.", fontSize = 13.sp)
+                TextButton(onClick = { vm.installUpdate() }) { Text("Allow") }
+            }
+            up.readyPath != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Downloaded. It installs by itself when you leave the app.", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                TextButton(onClick = { vm.installUpdate() }) { Text("Install now") }
+            }
+            else -> TextButton(onClick = { vm.installUpdate() }) { Text("Download & install") }
+        }
+        up.error?.let { Text(it, color = Palette.strongSell, fontSize = 12.sp) }
     }
 }
 

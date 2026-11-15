@@ -76,7 +76,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 Row {
                     TextButton(onClick = { vm.checkUpdate() }) { Text("Check now") }
                 }
-                ToggleRow("Check automatically", "On launch and twice a day in the background", s.autoUpdateCheck) { v -> vm.settings { it.copy(autoUpdateCheck = v) } }
+                ToggleRow("Update automatically", "Downloads new versions while you're on the home page and installs them when you leave the app", s.autoUpdateCheck) { v -> vm.settings { it.copy(autoUpdateCheck = v) } }
             }
 
             SectionCard("Portfolio currency", subtitle = "Every holding is converted at live FX rates") {

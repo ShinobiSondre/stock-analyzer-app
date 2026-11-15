@@ -17,11 +17,13 @@ import com.shinobisondre.stockanalyzer.engine.HoldingsText
 import com.shinobisondre.stockanalyzer.update.Updater
 import com.shinobisondre.stockanalyzer.work.AlertWorker
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
@@ -34,7 +36,7 @@ sealed interface Load<out T> {
 
 fun <T> Load<T>.value(): T? = (this as? Load.Ok<T>)?.v
 
-enum class Tab(val label: String) { MARKETS("Markets"), SCANNER("Scanner"), PORTFOLIO("Portfolio"), ALERTS("Alerts"), SETTINGS("Settings") }
+enum class Tab(val label: String) { MARKETS("Markets"), QUICK("Quick wins"), SCANNER("Scanner"), PORTFOLIO("Portfolio"), ALERTS("Alerts"), SETTINGS("Settings") }
 
 enum class Universe(val label: String, val note: String) {
     CORE("US core 30", "The web app's default watchlist"),
@@ -65,12 +67,33 @@ data class ScanState(
     val at: Long = 0,
 )
 
+data class QuickState(
+    val running: Boolean = false,
+    val done: Int = 0,
+    val total: Int = 0,
+    val items: List<com.shinobisondre.stockanalyzer.data.QuickWin> = emptyList(),
+    val at: Long = 0,
+    val includeMarket: Boolean = true,
+    val minMove: Double = 3.0,
+)
+
+data class ShotImport(
+    val busy: Boolean = true,
+    val stage: String = "Reading screenshot…",
+    val candidates: List<com.shinobisondre.stockanalyzer.data.ImportCandidate> = emptyList(),
+    val error: String? = null,
+    val replaceAll: Boolean = false,
+)
+
 data class UpdateState(
     val checking: Boolean = false,
     val available: Updater.Release? = null,
     val upToDate: Boolean = false,
     val progress: Float? = null,
     val error: String? = null,
+    /** Downloaded APK waiting to be installed. */
+    val readyPath: String? = null,
+    val installing: Boolean = false,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -91,6 +114,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val track = MutableStateFlow<Load<TrackView>>(Load.Idle)
     val update = MutableStateFlow(UpdateState())
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val quick = MutableStateFlow(QuickState())
+    val shot = MutableStateFlow<ShotImport?>(null)
+    /** Today's "quick win" pop-up (shown at most once a day per stock). */
+    val splash = MutableStateFlow<List<com.shinobisondre.stockanalyzer.data.QuickWin>?>(null)
+    private var quickJob: Job? = null
+    private var shotJob: Job? = null
+    private var lastAutoUpdate = 0L
+    private var backgroundInstall: Job? = null
 
     private var searchJob: Job? = null
     private var scanJob: Job? = null
@@ -100,7 +131,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) { repo.model } // parse model.json off the main thread
         refreshMarket()
         loadWatchlist()
-        if (state.value.settings.autoUpdateCheck) checkUpdate(silent = true)
+        // Holdings too, so the Markets banner can flag a big mover you own.
+        state.value.holdings.forEach { load(it.symbol, permits = true) }
+        autoUpdate()
     }
 
     fun markOnboarded() { if (!state.value.onboarded) repo.store.updateAsync { it.copy(onboarded = true) } }
@@ -262,6 +295,74 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── Quick wins ───────────────────────────────────────────────────────────
+    fun loadQuick(force: Boolean = false) {
+        val q = quick.value
+        if (q.running || (!force && q.at > 0 && System.currentTimeMillis() - q.at < 5 * 60_000)) return
+        quickJob?.cancel()
+        quick.update { it.copy(running = true, done = 0, total = 0) }
+        quickJob = viewModelScope.launch {
+            val market = if (quick.value.includeMarket) (Universes.CORE + Universes.US_LARGE + Universes.OSLO).distinct() else emptyList()
+            val items = runCatching { repo.quickWins(market, quick.value.minMove) { d, t -> quick.update { it.copy(done = d, total = t) } } }.getOrDefault(emptyList())
+            quick.update { it.copy(running = false, items = items, at = System.currentTimeMillis()) }
+        }
+    }
+
+    fun setQuickMarket(include: Boolean) { quick.update { it.copy(includeMarket = include, at = 0) }; loadQuick(true) }
+
+    // ── Screenshot import ────────────────────────────────────────────────────
+    fun importScreenshots(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        shot.value = ShotImport(stage = "Reading ${if (uris.size == 1) "screenshot" else "${uris.size} screenshots"}…")
+        shotJob?.cancel()
+        shotJob = viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val parsed = mutableListOf<com.shinobisondre.stockanalyzer.engine.ParsedHolding>()
+            for (u in uris) {
+                val lines = runCatching { com.shinobisondre.stockanalyzer.data.Ocr.lines(ctx, u) }.getOrElse {
+                    shot.value = ShotImport(busy = false, error = "Couldn't read the image: ${it.message}"); return@launch
+                }
+                for (h in com.shinobisondre.stockanalyzer.engine.BrokerScreenshot.parse(lines)) if (parsed.none { it.name.equals(h.name, true) }) parsed += h
+            }
+            if (parsed.isEmpty()) {
+                shot.value = ShotImport(busy = false, error = "No holdings found. Use the Holdings list in the Nordnet app (name, value and latest price visible) — scroll and add more screenshots for long portfolios.")
+                return@launch
+            }
+            shot.value = ShotImport(stage = "Matching ${parsed.size} holdings to tickers…")
+            val base = state.value.settings.baseCurrency
+            val cands = parsed.map { p -> async { repo.resolveImport(p, base) } }.map { it.await() }
+            shot.value = ShotImport(busy = false, stage = "review", candidates = cands)
+        }
+    }
+
+    fun editCandidate(i: Int, fn: (com.shinobisondre.stockanalyzer.data.ImportCandidate) -> com.shinobisondre.stockanalyzer.data.ImportCandidate) {
+        shot.update { s -> s?.copy(candidates = s.candidates.mapIndexed { k, c -> if (k == i) fn(c) else c }) }
+    }
+
+    fun setShotReplaceAll(v: Boolean) { shot.update { it?.copy(replaceAll = v) } }
+    fun dismissShot() { shotJob?.cancel(); shot.value = null }
+
+    fun confirmShot() {
+        val s = shot.value ?: return
+        val chosen = s.candidates.filter { it.selected }.mapNotNull { c ->
+            val sym = c.symbol.trim().uppercase()
+            val sh = c.sharesText.trim().replace(',', '.').replace(" ", "").toDoubleOrNull()
+            val cost = c.costText.trim().replace(" ", "").let { t -> if (t.isEmpty()) null else t.replace(',', '.').toDoubleOrNull() }
+            if (sym.isEmpty() || sh == null || sh <= 0) null else Holding(sym, sh, cost)
+        }.distinctBy { it.symbol }
+        if (chosen.isEmpty()) { say("Nothing selected to import"); return }
+        viewModelScope.launch {
+            repo.store.update { st ->
+                val keep = if (s.replaceAll) emptyList() else st.holdings.filter { h -> chosen.none { it.symbol == h.symbol } }
+                st.copy(holdings = keep + chosen)
+            }
+            shot.value = null
+            chosen.forEach { load(it.symbol, permits = true) }
+            loadPortfolio(true)
+            say("Imported ${chosen.size} holding${if (chosen.size == 1) "" else "s"} from the screenshot")
+        }
+    }
+
     // ── Alerts / track record ────────────────────────────────────────────────
     fun markAlertsRead() = repo.store.updateAsync { st -> st.copy(alerts = st.alerts.map { it.copy(read = true) }) }
     fun clearAlerts() = repo.store.updateAsync { st -> st.copy(alerts = emptyList()) }
@@ -295,19 +396,91 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Home page: check GitHub for a newer build and download it in the background.
+     * It installs itself when you leave the app (see [scheduleBackgroundInstall]),
+     * or right away from the banner's "Install now".
+     */
+    fun autoUpdate() {
+        if (!state.value.settings.autoUpdateCheck) return
+        val now = System.currentTimeMillis()
+        if (now - lastAutoUpdate < 10 * 60_000 || update.value.progress != null || update.value.installing) return
+        lastAutoUpdate = now
+        viewModelScope.launch {
+            val rel = runCatching { Updater.check() }.getOrNull() ?: return@launch
+            update.update { it.copy(available = rel, upToDate = false) }
+            download(rel)
+        }
+    }
+
+    private suspend fun download(rel: Updater.Release): java.io.File? {
+        val ctx = getApplication<Application>()
+        Updater.downloaded(ctx, rel)?.let { f -> update.update { it.copy(readyPath = f.path) }; return f }
+        update.update { it.copy(progress = 0f, error = null) }
+        val r = runCatching { Updater.download(ctx, rel) { p -> update.update { s -> s.copy(progress = p) } } }
+        update.update { it.copy(progress = null, error = r.exceptionOrNull()?.message, readyPath = r.getOrNull()?.path) }
+        return r.getOrNull()
+    }
+
     fun installUpdate() {
         val rel = update.value.available ?: return
         val ctx = getApplication<Application>()
         if (!Updater.canInstall(ctx)) {
             Updater.openInstallPermission(ctx)
-            say("Allow StockAnalyzer to install updates, then tap Install again.")
+            say("Allow StockAnalyzer to install its own updates — after that they install automatically.")
             return
         }
         viewModelScope.launch {
-            update.update { it.copy(progress = 0f, error = null) }
-            val r = runCatching { Updater.download(ctx, rel) { p -> update.update { s -> s.copy(progress = p) } } }
-            update.update { it.copy(progress = null, error = r.exceptionOrNull()?.message) }
-            r.getOrNull()?.let { Updater.install(ctx, it) }
+            val f = download(rel) ?: return@launch
+            update.update { it.copy(installing = true) }
+            val r = runCatching { withContext(kotlinx.coroutines.Dispatchers.IO) { Updater.installSession(ctx, f, rel.versionName) } }
+            if (r.isFailure) {
+                update.update { it.copy(installing = false) }
+                runCatching { Updater.install(ctx, f) } // fall back to the system installer screen
+            }
         }
     }
+
+    /** App left (screen off, home button, another app): apply a downloaded update ~15 s later, unless the user comes back. */
+    fun scheduleBackgroundInstall() {
+        val rel = update.value.available ?: return
+        val path = update.value.readyPath ?: return
+        val ctx = getApplication<Application>()
+        if (!state.value.settings.autoUpdateCheck || !Updater.canInstall(ctx) || Updater.holdInstall) return
+        backgroundInstall?.cancel()
+        backgroundInstall = viewModelScope.launch {
+            delay(15_000)
+            if (Updater.foreground || Updater.holdInstall) return@launch
+            update.update { it.copy(installing = true) }
+            runCatching { withContext(kotlinx.coroutines.Dispatchers.IO) { Updater.installSession(ctx, java.io.File(path), rel.versionName) } }
+                .onFailure { update.update { s -> s.copy(installing = false) } }
+        }
+    }
+
+    fun cancelBackgroundInstall() { backgroundInstall?.cancel(); backgroundInstall = null }
+
+    // ── Quick-win banner / pop-up (from data already loaded for the watchlist and holdings) ──
+    fun moversFromCores(map: Map<String, Load<Core>>): List<com.shinobisondre.stockanalyzer.data.QuickWin> {
+        val st = state.value
+        val owned = st.holdings.map { it.symbol }.toSet(); val watched = st.watchlist.toSet()
+        return map.mapNotNull { (sym, l) ->
+            val c = (l as? Load.Ok)?.v ?: return@mapNotNull null
+            if ((c.changePct ?: 0.0) < 3.0 || (sym !in owned && sym !in watched)) return@mapNotNull null
+            repo.quickFromChart(sym, c.chart, sym in owned, sym in watched)
+        }.sortedWith(compareByDescending<com.shinobisondre.stockanalyzer.data.QuickWin> { it.owned }.thenByDescending { it.changePct })
+    }
+
+    fun maybeSplash(movers: List<com.shinobisondre.stockanalyzer.data.QuickWin>) {
+        val worth = movers.filter { (it.owned && it.changePct >= 3.0) || (it.watched && it.changePct >= 5.0) }
+        if (worth.isEmpty() || splash.value != null) return
+        val prefs = getApplication<Application>().getSharedPreferences("ui", android.content.Context.MODE_PRIVATE)
+        val day = java.time.LocalDate.now().toString()
+        val seen = prefs.getString("splash", "")!!.split(',').filter { it.startsWith("$day:") }.map { it.substringAfter(':') }.toSet()
+        val fresh = worth.filter { it.symbol !in seen }
+        if (fresh.isEmpty()) return
+        prefs.edit().putString("splash", (seen + fresh.map { it.symbol }).joinToString(",") { "$day:$it" }).apply()
+        splash.value = fresh.take(3)
+    }
+
+    fun dismissSplash() { splash.value = null }
 }

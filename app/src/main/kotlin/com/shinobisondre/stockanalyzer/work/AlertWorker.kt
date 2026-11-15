@@ -48,6 +48,18 @@ object Notifier {
     fun canPost(ctx: Context): Boolean =
         Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
+    fun postIntent(ctx: Context, channel: String, id: Int, title: String, text: String, pi: PendingIntent) {
+        if (!canPost(ctx)) return
+        val n = NotificationCompat.Builder(ctx, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        try { NotificationManagerCompat.from(ctx).notify(id, n) } catch (_: SecurityException) { }
+    }
+
     fun post(ctx: Context, channel: String, id: Int, title: String, text: String, symbol: String? = null) {
         if (!canPost(ctx)) return
         val intent = Intent(ctx, MainActivity::class.java).apply {
@@ -146,7 +158,11 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             val today = core.chart.last?.date
             if (settings.notifyMoves && chg != null && abs(chg) >= settings.bigMovePct && prev.moveAlertDate != today) {
                 val dir = if (chg > 0) "up" else "down"
-                newAlerts += alert(sym, "move", "$sym $dir ${"%.1f".format(abs(chg))}% today", "Price ${"%.2f".format(core.price ?: 0.0)} ${core.currency}. Open the app for what's driving it.")
+                // For big up-days, add the sell-by-the-close lean from 20 years of similar days.
+                val lean = if (chg > 0) repo.quickFromChart(sym, core.chart, st.holdings.any { it.symbol == sym }, sym in st.watchlist)?.advice else null
+                val body = "Price ${"%.2f".format(core.price ?: 0.0)} ${core.currency}. " +
+                    (lean?.let { "${it.lean.title}. ${it.lines.first()}" } ?: "Open the app for what's driving it.")
+                newAlerts += alert(sym, "move", "$sym $dir ${"%.1f".format(abs(chg))}% today", body)
                 next = next.copy(moveAlertDate = today)
             }
             watch[sym] = next

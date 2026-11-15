@@ -166,6 +166,16 @@ object Yahoo {
         return hits to items
     }
 
+    /** Yahoo's "day gainers" screener (needs the crumb). Large enough, liquid names only. */
+    suspend fun dayGainers(): List<String> {
+        val c = crumb() ?: return emptyList()
+        val body = Http.get("https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_gainers&count=30&formatted=false&crumb=${enc(c)}", allowError = true)
+        val quotes = runCatching { MiniJson.parse(body).obj()["finance"].obj()["result"].list().firstOrNull().obj()["quotes"].list() }.getOrDefault(emptyList())
+        return quotes.map { it.obj() }.filter { q ->
+            (q["marketCap"].num() ?: 0.0) >= 1e9 && (q["regularMarketPrice"].num() ?: 0.0) >= 3 && q["quoteType"].str() != "ETF"
+        }.mapNotNull { it["symbol"].str() }
+    }
+
     // ── Session (cookie + crumb) ─────────────────────────────────────────────
     suspend fun crumb(): String? = crumbLock.withLock {
         crumb?.let { return it }

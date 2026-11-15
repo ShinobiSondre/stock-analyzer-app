@@ -74,6 +74,7 @@ data class FoldInfo(
 
 private fun Tab.icon(): ImageVector = when (this) {
     Tab.MARKETS -> Icons.Filled.Home
+    Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.BoltIcon
     Tab.SCANNER -> Icons.Filled.Search
     Tab.PORTFOLIO -> Icons.Filled.AccountBox
     Tab.ALERTS -> Icons.Filled.Notifications
@@ -104,7 +105,8 @@ private fun CompactLayout(vm: MainViewModel, tab: Tab, selected: String?, unread
         contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
         bottomBar = {
             if (selected == null) NavigationBar(containerColor = Palette.surface) {
-                Tab.entries.forEach { t ->
+                // Settings lives behind the gear on the home page on the narrow screen.
+                Tab.entries.filter { it != Tab.SETTINGS }.forEach { t ->
                     NavigationBarItem(
                         selected = t == tab,
                         onClick = { vm.tab.value = t },
@@ -197,6 +199,7 @@ private fun TabIcon(t: Tab, unread: Int) {
 fun TabContent(vm: MainViewModel, tab: Tab, twoPane: Boolean) {
     when (tab) {
         Tab.MARKETS -> MarketsScreen(vm)
+        Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.QuickWinsScreen(vm)
         Tab.SCANNER -> ScannerScreen(vm)
         Tab.PORTFOLIO -> PortfolioScreen(vm, twoPane)
         Tab.ALERTS -> AlertsScreen(vm)

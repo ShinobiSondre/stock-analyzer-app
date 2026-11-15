@@ -1,5 +1,8 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,7 +17,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +32,9 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -49,9 +59,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shinobisondre.stockanalyzer.data.Holding
 import com.shinobisondre.stockanalyzer.data.HoldingView
+import com.shinobisondre.stockanalyzer.data.ImportCandidate
+import com.shinobisondre.stockanalyzer.ui.ShotImport
+import com.shinobisondre.stockanalyzer.update.Updater
 import com.shinobisondre.stockanalyzer.data.PortfolioView
 import com.shinobisondre.stockanalyzer.engine.Tone
 import com.shinobisondre.stockanalyzer.ui.CallBadge
@@ -75,7 +89,17 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
     var editing by remember { mutableStateOf<Holding?>(null) }
     var adding by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
+    val shot by vm.shot.collectAsStateWithLifecycle()
     LaunchedEffect(st.holdings.size) { vm.loadPortfolio() }
+    // System photo picker: pick one or more Nordnet screenshots (no storage permission needed).
+    val pickShots = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(8)) { uris ->
+        Updater.holdInstall = false
+        vm.importScreenshots(uris)
+    }
+    val pick = {
+        Updater.holdInstall = true
+        pickShots.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
@@ -85,10 +109,17 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
                 IconButton(onClick = { vm.loadPortfolio(true) }) { Icon(Icons.Filled.Refresh, "Refresh") }
             }
         }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = pick, modifier = Modifier.weight(1f)) { Text("Import Nordnet screenshot") }
+                OutlinedButton(onClick = { importing = true }) { Text("Paste") }
+            }
+            Text("Holdings tab in the Nordnet app → screenshot → import (or share the screenshot straight to StockAnalyzer). Scroll and take more screenshots for long lists — pick them all at once.",
+                color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp))
+        }
         if (st.holdings.isEmpty()) {
             item {
-                EmptyState("No holdings yet", "Add positions one by one, or paste them all at once (e.g. \"GOOGL 10, NVDA 21, MU 13 @ 984\"). Every position is valued in ${st.settings.baseCurrency} and gets its own call.",
-                    actionLabel = "Paste holdings") { importing = true }
+                EmptyState("No holdings yet", "Import a screenshot of your Nordnet holdings, add positions one by one, or paste them (e.g. \"GOOGL 10, NVDA 21, MU 13 @ 984\"). Every position is valued in ${st.settings.baseCurrency} and gets its own call.")
             }
         } else {
             item {
@@ -114,6 +145,71 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
     if (adding) HoldingDialog(null, null, null, onDismiss = { adding = false }) { s, sh, c, rep -> vm.upsertHolding(s, sh, c, rep); adding = false }
     editing?.let { h -> HoldingDialog(h.symbol, h, null, onDismiss = { editing = null }) { s, sh, c, rep -> vm.upsertHolding(s, sh, c, rep); editing = null } }
     if (importing) ImportDialog(onDismiss = { importing = false }) { text, replace -> vm.say(vm.importHoldings(text, replace)); importing = false }
+    shot?.let { ScreenshotReview(vm, it, onPickAgain = { vm.dismissShot(); pick() }) }
+}
+
+/** Review what was read off the screenshot: fix tickers/shares, untick rows, then import. */
+@Composable
+private fun ScreenshotReview(vm: MainViewModel, s: ShotImport, onPickAgain: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = { if (!s.busy) vm.dismissShot() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 720.dp),
+        title = { Text(if (s.busy) "Importing" else if (s.error != null) "Couldn't import" else "Found ${s.candidates.size} holdings") },
+        text = {
+            when {
+                s.busy -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    CircularProgressIndicator(color = Palette.accent)
+                    Spacer(Modifier.height(10.dp))
+                    Text(s.stage, color = Palette.muted, fontSize = 14.sp)
+                }
+                s.error != null -> Text(s.error, fontSize = 14.sp)
+                else -> Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Check the tickers and share counts. Nordnet's list shows value and price, not the number of shares, so shares are worked out from value ÷ price at today's exchange rate.",
+                        color = Palette.muted, fontSize = 12.sp)
+                    s.candidates.forEachIndexed { i, c -> CandidateRow(c, onChange = { fn -> vm.editCandidate(i, fn) }) }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = s.replaceAll, onCheckedChange = { vm.setShotReplaceAll(it) })
+                        Text("Replace my whole portfolio with these", fontSize = 13.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (!s.busy && s.error == null) {
+                val n = s.candidates.count { it.selected }
+                TextButton(enabled = n > 0, onClick = { vm.confirmShot() }) { Text("Import $n") }
+            } else if (s.error != null) TextButton(onClick = onPickAgain) { Text("Pick screenshots") }
+        },
+        dismissButton = { if (!s.busy) TextButton(onClick = { vm.dismissShot() }) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun CandidateRow(c: ImportCandidate, onChange: ((ImportCandidate) -> ImportCandidate) -> Unit) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.surface2).padding(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = c.selected, onCheckedChange = { v -> onChange { it.copy(selected = v) } })
+            Column(Modifier.weight(1f)) {
+                Text(c.parsed.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull(
+                    c.parsed.marketValue?.let { "Value ${F.num(it, 0)} ${c.parsed.valueCurrency ?: ""}".trim() },
+                    c.parsed.lastPrice?.let { "Latest ${F.num(it)} ${c.parsed.lastCurrency ?: ""}".trim() },
+                    c.parsed.returnPct?.let { "Return ${F.pct(it)}" },
+                ).joinToString(" · "), color = Palette.muted, fontSize = 11.sp, maxLines = 2)
+                c.resolvedName?.let { Text("→ $it", color = Palette.accent, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(c.symbol, { v -> onChange { it.copy(symbol = v.uppercase().trim(), selected = true) } }, label = { Text("Ticker") }, singleLine = true,
+                modifier = Modifier.weight(1.1f), keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters))
+            OutlinedTextField(c.sharesText, { v -> onChange { it.copy(sharesText = v) } }, label = { Text("Shares") }, singleLine = true,
+                modifier = Modifier.weight(0.9f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            OutlinedTextField(c.costText, { v -> onChange { it.copy(costText = v) } }, label = { Text("Avg cost") }, singleLine = true,
+                modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+        }
+        if (c.note.isNotBlank()) Text(c.note, color = if (c.symbol.isBlank() || c.sharesText.isBlank()) Palette.warn else Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+    }
 }
 
 @Composable
