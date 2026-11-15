@@ -31,6 +31,8 @@ object EngineSelfTest {
         trackRecord()
         rulesAndAnalyzer()
         jsonRoundTrip()
+        brokerScreenshots()
+        dayAfter()
         println("EngineSelfTest: $passed checks passed, ${failures.size} failed")
         failures.forEach { println("  FAIL $it") }
         return failures.toList()
@@ -218,6 +220,108 @@ object EngineSelfTest {
         check("jsonStats", back.horizon(10)!!.stats["BUY"]?.n == 1200)
         val parsed = MiniJson.parse("""{"a":[1,2.5,-3e2,null,true],"b":{"c":"x\"yå"}}""").obj()
         check("jsonParse", parsed["b"].obj()["c"] == "x\"yå" && (parsed["a"] as List<*>)[2] == -300.0)
+    }
+
+    /** The Nordnet app's Holdings tab (English UI, NOK account), laid out as in a real screenshot. */
+    private fun nordnetHoldings(): List<OcrLine> {
+        val out = mutableListOf(
+            OcrLine("22:25", 100, 35, 200, 75), OcrLine("IKZ", 640, 150, 690, 185), OcrLine("Investeringskonto Zero", 710, 145, 1045, 190),
+            OcrLine("Holdings", 38, 278, 170, 318), OcrLine("Details", 226, 278, 328, 318), OcrLine("Transactions", 386, 278, 574, 318),
+            OcrLine("Stocks", 76, 370, 180, 405),
+        )
+        val rows = listOf(
+            listOf("Alphabet A", "28,293 kr", "-21.75%", "0%", "295.77 USD"),
+            listOf("Apple", "13,632 kr", "+9.64%", "0%", "356.27 USD"),
+            listOf("Eli Lilly", "13,822 kr", "+15.81%", "0%", "1,445 USD"),
+            listOf("Kongsberg Maritime", "29,250 kr", "+3.54%", "0%", "58.50 NOK"),
+            listOf("Mobileye Global A", "5,744 kr", "-42.64%", "0%", "5.56 USD"),
+            listOf("NVIDIA", "66,984 kr", "-12.12%", "0%", "162.85 USD"),
+        )
+        rows.forEachIndexed { k, r ->
+            val y = 460 + k * 240
+            out += OcrLine(r[0], 181, y, 181 + r[0].length * 22, y + 40)
+            if (r[0] == "Eli Lilly") out += OcrLine("Lilly", 90, y + 5, 140, y + 30) // text inside the logo
+            out += listOf(OcrLine("Value", 76, y + 80, 145, y + 112), OcrLine("Return", 476, y + 80, 557, y + 112),
+                OcrLine("Today", 876, y + 80, 949, y + 112), OcrLine("Latest", 1517, y + 80, 1593, y + 112))
+            out += listOf(OcrLine(r[1], 76, y + 125, 199, y + 160), OcrLine(r[2], 476, y + 125, 584, y + 160),
+                OcrLine(r[3], 876, y + 125, 916, y + 160), OcrLine(r[4], 1593 - r[4].length * 16, y + 125, 1593, y + 160))
+        }
+        out += listOf(OcrLine("Sort", 123, 1900, 186, 1935), OcrLine("wan Semiconductor Manufacturing ADR", 224, 1895, 812, 1940),
+            OcrLine("Overview", 111, 2105, 224, 2135), OcrLine("Watchlists", 438, 2105, 564, 2135), OcrLine("Discover", 783, 2105, 889, 2135),
+            OcrLine("Feed", 1140, 2105, 1199, 2135), OcrLine("Market", 1460, 2105, 1544, 2135))
+        return out.shuffled(java.util.Random(3))
+    }
+
+    private fun brokerScreenshots() {
+        near("num nordic", BrokerScreenshot.parseNumber("1 234,56", ','), 1234.56, 1e-9)
+        near("num english", BrokerScreenshot.parseNumber("28,293", '.'), 28293.0, 1e-9)
+        near("num english dec", BrokerScreenshot.parseNumber("295.77", '.'), 295.77, 1e-9)
+        near("num minus", BrokerScreenshot.parseNumber("−3,2", ','), -3.2, 1e-9)
+        near("num mixed", BrokerScreenshot.parseNumber("1.234,5", ','), 1234.5, 1e-9)
+        check("decimal mark", BrokerScreenshot.decimalMarkOf(listOf("28,293 kr", "295.77 USD", "-21.75%")) == '.')
+        check("decimal mark nordic", BrokerScreenshot.decimalMarkOf(listOf("28 293 kr", "295,77 USD", "-21,75 %")) == ',')
+
+        val h = BrokerScreenshot.parse(nordnetHoldings())
+        check("nordnet count", h.size == 6) { h.joinToString("\n") }
+        val g = h.firstOrNull { it.name == "Alphabet A" }
+        check("nordnet alphabet", g != null && g.marketValue == 28293.0 && g.lastPrice == 295.77 && g.lastCurrency == "USD" && g.valueCurrency == "NOK" && g.returnPct == -21.75) { "$g" }
+        check("nordnet shares", g?.shares(9.566) == 10.0) { "${g?.shares(9.566)}" }
+        near("nordnet implied cost", g?.impliedAvgCost(), 295.77 / (1 - 0.2175), 1e-9)
+        val km = h.firstOrNull { it.name == "Kongsberg Maritime" }
+        check("nordnet nok listing", km?.shares(1.0) == 500.0 && km.lastCurrency == "NOK") { "$km" }
+        check("nordnet logo merged", h.any { it.name == "Eli Lilly" } && h.none { it.name == "Lilly" })
+        check("nordnet lilly 1445", h.firstOrNull { it.name == "Eli Lilly" }?.lastPrice == 1445.0)
+        check("nordnet mobileye", h.firstOrNull { it.name == "Mobileye Global A" }?.shares(9.566) == 108.0) { "${h.firstOrNull { it.name == "Mobileye Global A" }}" }
+        check("nordnet no noise", h.none { it.name in setOf("IKZ", "Sort", "Overview", "Stocks") || it.name.contains("Semiconductor") }) { h.map { it.name }.toString() }
+
+        // Norwegian table layout with a header row and explicit quantity / GAV.
+        val table = listOf(
+            OcrLine("Navn", 40, 200, 120, 230), OcrLine("Antall", 420, 200, 520, 230), OcrLine("GAV", 560, 200, 620, 230),
+            OcrLine("Siste", 700, 200, 780, 230), OcrLine("Markedsverdi", 860, 200, 1040, 230),
+            OcrLine("Micron Technology", 40, 260, 330, 290), OcrLine("13", 450, 260, 480, 290), OcrLine("984,00", 560, 260, 650, 290),
+            OcrLine("1 012,40", 690, 260, 800, 290), OcrLine("13 161,20", 900, 260, 1040, 290),
+            OcrLine("Kongsberg Maritime", 40, 320, 340, 350), OcrLine("500", 440, 320, 490, 350), OcrLine("80,10", 700, 320, 790, 350),
+            OcrLine("40 050,00", 900, 320, 1040, 350),
+        )
+        val t = BrokerScreenshot.parse(table)
+        val mu = t.firstOrNull { it.name == "Micron Technology" }
+        check("table micron", mu != null && mu.quantity == 13.0 && mu.avgCost == 984.0 && mu.lastPrice == 1012.4 && mu.marketValue == 13161.2) { "$t" }
+        check("table kongsberg", t.firstOrNull { it.name == "Kongsberg Maritime" }?.quantity == 500.0) { "$t" }
+
+        // Stacked app layout with "stk" and inline GAV.
+        val stacked = listOf(
+            OcrLine("NVIDIA", 40, 450, 220, 495), OcrLine("31 210,00 NOK", 700, 450, 1040, 495),
+            OcrLine("21 stk · GAV 120,50", 40, 500, 420, 535), OcrLine("−4,1 %", 880, 500, 1040, 535),
+        )
+        val st = BrokerScreenshot.parse(stacked).firstOrNull()
+        check("stacked", st != null && st.quantity == 21.0 && st.avgCost == 120.5 && st.returnPct == -4.1) { "$st" }
+        check("search queries", BrokerScreenshot.searchQueries("Airbnb, Inc. - Class A").contains("Airbnb")) { BrokerScreenshot.searchQueries("Airbnb, Inc. - Class A").toString() }
+    }
+
+    private fun dayAfter() {
+        val base = DayStat(100000, 0.52, 0.05, 0.53, 0.02, 0.55, 0.3)
+        val fade = DayStat(900, 0.45, -0.40, 0.48, -0.10, 0.50, -0.2)
+        val run = DayStat(800, 0.57, 0.45, 0.62, 0.30, 0.60, 1.1)
+        val coarse = DayStat(5000, 0.51, 0.02, 0.55, 0.05, 0.55, 0.4)
+        val t = DayAfterTable(base, mapOf(
+            DayAfter.key(1, 2, 0, 1) to fade,          // +5–8%, 3× volume, faded, above 200-day
+            DayAfter.key(1, null, 2, null) to run,     // +5–8%, closed near the high
+            DayAfter.key(1, null, null, null) to coarse,
+            DayAfter.key(0, 0, 1, 0) to DayStat(50, 0.9, 3.0, 0.9, 1.0, 0.9, 5.0), // too small — must be skipped
+        ))
+        val a = DayAfter.advise(t, 6.0, 3.5, 0.3, true, 0.6)
+        check("eod sell", a?.lean == EodLean.SELL_BY_CLOSE && a.stat == fade) { "$a" }
+        val b = DayAfter.advise(t, 6.0, 1.0, 0.9, false, 0.6)
+        check("eod hold", b?.lean == EodLean.HOLD_OVERNIGHT && b.stat == run) { "$b" }
+        val c = DayAfter.advise(t, 6.0, 1.0, 0.6, false, 0.6)
+        check("eod coarse", c?.lean == EodLean.NO_EDGE && c.stat == coarse) { "$c" }
+        check("eod small n skipped", DayAfter.lookup(t, 4.0, 1.0, 0.6, false) == null)
+        check("eod below threshold", DayAfter.advise(t, 2.0, 1.0, 0.5, true, 0.6) == null)
+        check("eod keys", DayAfter.keysFor(1, 2, 0, 1).size == 16 && DayAfter.keysFor(1, 2, 0, 1).contains("*|*|*|*"))
+        val book = DayAfterBook("now", "2026-11-13", t, null)
+        val back = DayAfterBook.fromJson(book.toJson())
+        check("eod json", back.us.buckets[DayAfter.key(1, null, 2, null)] == run && back.oslo == null && back.table("EQNR.OL") === back.us)
+        near("clv", DayAfter.clv(105.0, 100.0, 110.0), 0.5, 1e-12)
     }
 
     @JvmStatic

@@ -64,6 +64,20 @@ fun main(args: Array<String>) {
         println("Loaded ${bars.size} series; ${failures.size} failures: ${failures.keys.joinToString(" ")}")
     }
     val spy = bars[Universe.SPY] ?: error("SPY missing — cannot build market features")
+
+    // ── Big up-day statistics for the Quick wins tab (fast; runs first) ──
+    run {
+        val eras = mutableMapOf<String, MutableMap<String, com.shinobisondre.stockanalyzer.engine.DayStat>>()
+        val usT = DayAfterStats.build(bars, groups["discovery"]!! + groups["holdout"]!!, byEra = eras)
+        val osloT = DayAfterStats.build(bars, groups["oslo"]!!)
+        val to = spy.lastOrNull()?.date ?: "?"
+        val book = com.shinobisondre.stockanalyzer.engine.DayAfterBook(java.time.Instant.now().toString(), to, usT, osloT)
+        File(out, "dayafter.json").writeText(book.toJson())
+        val rep = DayAfterStats.report(usT, osloT, eras, to)
+        File(out, "DAYAFTER_REPORT.md").writeText(rep)
+        println(rep)
+    }
+    if (args.contains("--dayafter-only")) { println("Done (day-after stats only) in ${(System.currentTimeMillis() - t0) / 1000}s"); return }
     val vix = bars[Universe.VIX] ?: emptyList()
     val market = MarketSeries(spy, vix)
 

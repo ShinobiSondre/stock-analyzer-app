@@ -49,9 +49,12 @@ jobs:
           ./gradlew :engine:test :trainer:installDist --no-daemon --stacktrace 2>&1 | tee build.log
 
       - name: Train (walk-forward, ~200 tickers, 2004→today)
+        env:
+          # "[stats-only]" in the commit message skips the 25-minute model competition.
+          EXTRA: ${{ contains(github.event.head_commit.message, '[stats-only]') && '--dayafter-only' || '' }}
         run: |
           set -o pipefail
-          JAVA_OPTS="-Xmx6g" trainer/build/install/trainer/bin/trainer --cache ~/wf-cache --out out 2>&1 | tee train.log
+          JAVA_OPTS="-Xmx6g" trainer/build/install/trainer/bin/trainer --cache ~/wf-cache --out out $EXTRA 2>&1 | tee train.log
 
       - name: Publish results to the ci-model branch
         if: always()
