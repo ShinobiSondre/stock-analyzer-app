@@ -22,7 +22,11 @@ android {
         buildConfigField("String", "UPDATE_REPO", "\"ShinobiSondre/stock-analyzer-app\"")
         // 64-bit ARM only (every current Galaxy): keeps ML Kit's OCR model from tripling the APK size.
         ndk { abiFilters += listOf("arm64-v8a") }
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_static") } }
     }
+
+    // whisper.cpp for on-phone speech recognition, same setup as FaithScroll (see src/main/cpp)
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     signingConfigs {
         create("release") {
@@ -110,6 +114,9 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
+    // Fallback speech recognition (FaithScroll's English engine) if Whisper can't load
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 
     testImplementation("junit:junit:4.13.2")
 }

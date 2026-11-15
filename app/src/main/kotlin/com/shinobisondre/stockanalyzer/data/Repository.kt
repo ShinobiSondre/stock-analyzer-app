@@ -440,7 +440,7 @@ class Repository(private val context: Context, val store: Store) {
     }
 
     /** Transcript → AI summary of what Tyler thinks will happen (key quotes only if no AI answers). */
-    suspend fun tylerSummarize(v: YtVideo, onStage: (String) -> Unit): TylerTake {
+    suspend fun tylerSummarize(v: YtVideo, allowAsr: Boolean = true, onStage: (String) -> Unit): TylerTake {
         onStage("Getting the transcript…")
         // Exactly FaithScroll's route: video page + YouTube's Android player for the caption list, then the
         // caption file (plain link, else the website link with a proof-of-origin token).
@@ -449,7 +449,14 @@ class Repository(private val context: Context, val store: Store) {
             com.shinobisondre.stockanalyzer.video.Transcripts.original(v.id)
         }.getOrNull()
         val info = runCatching { com.shinobisondre.stockanalyzer.video.WatchPage.info(v.id) }.getOrNull()
-        val text = transcript?.cues?.map { it.text }?.let { TylerTalk.clean(it) }?.takeIf { it.split(' ').size > 40 }
+        var cues = transcript?.cues
+        com.shinobisondre.stockanalyzer.video.Diag.log("tyler", "${v.id}: YouTube captions ${if (cues.isNullOrEmpty()) "not available" else "${cues.size} lines"}")
+        if (cues.isNullOrEmpty() && allowAsr) {
+            // YouTube wouldn't hand over captions: listen to the video on the phone (Whisper, like FaithScroll).
+            cues = runCatching { com.shinobisondre.stockanalyzer.video.Asr.transcribeVideo(context, v.id, onStage) }
+                .onFailure { com.shinobisondre.stockanalyzer.video.Diag.err("asr", "${v.id} failed", it) }.getOrNull()
+        }
+        val text = cues?.map { it.text }?.let { TylerTalk.clean(it) }?.takeIf { it.split(' ').size > 40 }
         val video = v.copy(
             description = info?.description?.takeIf { it.isNotBlank() } ?: v.description,
             title = v.title.ifBlank { info?.title ?: "" },

@@ -348,16 +348,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             vids.onFailure { e -> tyler.update { it.copy(loading = false, error = "Couldn't reach YouTube: ${e.message}") } }
             val list = vids.getOrNull() ?: return@launch
             tyler.update { it.copy(videos = list, loading = false, at = System.currentTimeMillis()) }
-            for (v in list.take(6)) {
-                if (tyler.value.takes[v.id]?.aiMade == true) continue
-                summariseTyler(v)
+            // Newest 3: captions, else listen on the phone. Older ones: captions only (tap to listen).
+            list.take(6).forEachIndexed { i, v ->
+                val have = tyler.value.takes[v.id]
+                if (have != null && have.aiMade && have.words > 0) return@forEachIndexed
+                if (have != null && i >= 3) return@forEachIndexed
+                summariseTyler(v, allowAsr = i < 3)
             }
         }
     }
 
-    private suspend fun summariseTyler(v: com.shinobisondre.stockanalyzer.engine.YtVideo) {
+    private suspend fun summariseTyler(v: com.shinobisondre.stockanalyzer.engine.YtVideo, allowAsr: Boolean = true) {
         tyler.update { it.copy(working = it.working + (v.id to "Starting…")) }
-        val take = runCatching { repo.tylerSummarize(v) { stage -> tyler.update { s -> s.copy(working = s.working + (v.id to stage)) } } }.getOrNull()
+        com.shinobisondre.stockanalyzer.video.Transcripts.retry(v.id)
+        val take = runCatching { repo.tylerSummarize(v, allowAsr) { stage -> tyler.update { s -> s.copy(working = s.working + (v.id to stage)) } } }.getOrNull()
         tyler.update { s -> s.copy(working = s.working - v.id, takes = if (take != null) s.takes + (v.id to take) else s.takes) }
     }
 
