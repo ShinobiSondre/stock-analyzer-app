@@ -160,9 +160,10 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             if (settings.notifyMoves && chg != null && abs(chg) >= settings.bigMovePct && prev.moveAlertDate != today) {
                 val dir = if (chg > 0) "up" else "down"
                 // For big up-days, add the sell-by-the-close lean from 20 years of similar days.
-                val lean = if (chg > 0) repo.quickFromChart(sym, core.chart, st.holdings.any { it.symbol == sym }, sym in st.watchlist)?.advice else null
+                val qw = if (chg > 0) repo.quickFromChart(sym, core.chart, st.holdings.any { it.symbol == sym }, sym in st.watchlist) else null
+                val call = qw?.let { com.shinobisondre.stockanalyzer.engine.DayAfter.plain(it.advice, it.owned, it.costPct, if (it.sessionOpen) it.closeLocal else null) }
                 val body = "Price ${"%.2f".format(core.price ?: 0.0)} ${core.currency}. " +
-                    (lean?.let { "${it.lean.title}. ${it.lines.first()}" } ?: "Open the app for what's driving it.")
+                    (call?.let { "${it.action}. Because: ${it.because}" } ?: "Open the app for what's driving it.")
                 newAlerts += alert(sym, "move", "$sym $dir ${"%.1f".format(abs(chg))}% today", body)
                 next = next.copy(moveAlertDate = today)
             }

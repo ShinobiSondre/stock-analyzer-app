@@ -55,6 +55,9 @@ enum class EodLean(val title: String, val tone: Tone) {
 
 data class EodAdvice(val lean: EodLean, val stat: DayStat, val base: DayStat, val bucketLabel: String, val lines: List<String>)
 
+/** The same answer in a few plain words: what to do, and one "because". */
+data class PlainCall(val action: String, val because: String, val tone: Tone)
+
 /**
  * "It's up a lot today — sell before the close or hold?" answered with what
  * actually happened after similar days, bucketed by:
@@ -127,6 +130,32 @@ object DayAfter {
         }
         if (st.meanNextPct < costPct) lines += "Chasing it now for a next-day exit: the average next-day move (${pct(st.meanNextPct, 2)}) is below a round trip's cost (~${pct(costPct, 1).removePrefix("+")})."
         return EodAdvice(lean, st, b, label, lines)
+    }
+
+    /**
+     * Plain-English version for the Quick wins tab.
+     * [owned]: you hold it (sell or keep?) vs. you don't (buy or not?).
+     * [closeTime]: local closing time while the market is open ("22:00"), null when it's closed.
+     */
+    fun plain(a: EodAdvice?, owned: Boolean, costPct: Double, closeTime: String?): PlainCall {
+        val sellWhen = if (closeTime != null) "before $closeTime today" else "at tomorrow's open"
+        if (a == null) return PlainCall(if (owned) "Up to you" else "Don't chase it",
+            "There aren't enough past jumps this big to say what usually happens next.", Tone.NEUTRAL)
+        val up = (a.stat.pUpNext * 100).roundToInt(); val down = 100 - up
+        val avg = a.stat.meanNextPct
+        fun p(x: Double) = "%.1f".format(kotlin.math.abs(x))
+        return when (a.lean) {
+            EodLean.SELL_BY_CLOSE ->
+                if (owned) PlainCall("Sell $sellWhen", "After jumps like this, the price was lower the next day $down times out of 100.", Tone.SELL)
+                else PlainCall("Don't buy now", "After jumps like this, the price was lower the next day $down times out of 100.", Tone.SELL)
+            EodLean.HOLD_OVERNIGHT ->
+                if (owned) PlainCall("Keep it — don't sell today", "After jumps like this, the price kept rising the next day $up times out of 100.", Tone.BUY)
+                else if (avg > costPct) PlainCall("Buy now, sell tomorrow", "After jumps like this, the price kept rising the next day $up times out of 100 (about +${p(avg)}% on average).", Tone.BUY)
+                else PlainCall("Don't buy — gain too small", "It usually rises a bit more the next day (about +${p(avg)}%), but fees of about ${p(costPct)}% eat that up.", Tone.NEUTRAL)
+            EodLean.NO_EDGE ->
+                if (owned) PlainCall("Up to you — no clear pattern", "After jumps like this, the price was higher the next day $up times out of 100 — close to a coin flip. Selling now locks in today's gain.", Tone.NEUTRAL)
+                else PlainCall("Don't chase it", "After jumps like this, the next day is close to a coin flip (up $up times out of 100), and fees make it a losing bet on average.", Tone.NEUTRAL)
+        }
     }
 
     /** Close-location value: 0 = at the day's low, 1 = at the high. */

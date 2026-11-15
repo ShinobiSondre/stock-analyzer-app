@@ -1,6 +1,17 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -125,6 +136,8 @@ fun TylerScreen(vm: MainViewModel) {
         val pending = t.videos.take(6).filter { it.id !in known || it.id in t.working }
         items(pending, key = { "tv-pending-" + it.id }) { v ->
             SectionCard(v.title, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), subtitle = ytDate(v.published)) {
+                VideoThumb(v.id) { vm.watch(v.id) }
+                Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (v.id in t.working) CircularProgressIndicator(Modifier.padding(end = 10.dp).width(18.dp).height(18.dp), color = Palette.accent, strokeWidth = 2.dp)
                     Text(t.working[v.id] ?: "Waiting to be summarised…", color = Palette.muted, fontSize = 13.sp)
@@ -132,7 +145,8 @@ fun TylerScreen(vm: MainViewModel) {
             }
         }
         items(takes.filter { it.videoId !in t.working }, key = { "tv-" + it.videoId }) { tk ->
-            TakeCard(tk, owned, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), onTicker = { vm.open(it) }, onRetry = { vm.resummarise(tk.videoId) })
+            TakeCard(tk, owned, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), onTicker = { vm.open(it) }, onRetry = { vm.resummarise(tk.videoId) },
+                onWatch = { vm.watch(tk.videoId) })
         }
         if (!t.loading && takes.isEmpty() && pending.isEmpty() && t.error == null && t.at > 0) item {
             EmptyState("No videos found", "Couldn't find recent uploads on the Tyler Hill Stocks channel. Pull to refresh in a bit.")
@@ -144,12 +158,27 @@ fun TylerScreen(vm: MainViewModel) {
     }
 }
 
+/** Video thumbnail with a play button; tap to watch inside the app. */
+@Composable
+fun VideoThumb(videoId: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(Color.Black).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        AsyncImage(model = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg", contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Box(Modifier.size(56.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.PlayArrow, "Play", tint = Color.White, modifier = Modifier.size(34.dp))
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TakeCard(tk: TylerTake, owned: Set<String>, modifier: Modifier, onTicker: (String) -> Unit, onRetry: () -> Unit) {
-    var open by rememberSaveable(tk.videoId) { mutableStateOf(false) }
+fun TakeCard(
+    tk: TylerTake, owned: Set<String>, modifier: Modifier, onTicker: (String) -> Unit, onRetry: () -> Unit,
+    onWatch: (() -> Unit)?, startOpen: Boolean = false, showThumb: Boolean = true,
+) {
+    var open by rememberSaveable(tk.videoId) { mutableStateOf(startOpen) }
     val uri = LocalUriHandler.current
     SectionCard(tk.title, modifier, subtitle = ytDate(tk.published)) {
+        if (showThumb && onWatch != null) { VideoThumb(tk.videoId, onClick = onWatch); Spacer(Modifier.height(10.dp)) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (tk.aiMade) ToneChip(stanceLabel(tk.stance), tk.tone)
             else Pill(if (tk.source == "description") "No transcript" else "Key quotes only", Palette.warn)
@@ -193,7 +222,8 @@ private fun TakeCard(tk: TylerTake, owned: Set<String>, modifier: Modifier, onTi
         }
         Row {
             TextButton(onClick = { open = !open }) { Text(if (open) "Less" else "Details") }
-            TextButton(onClick = { runCatching { uri.openUri("https://www.youtube.com/watch?v=${tk.videoId}") } }) { Text("Watch") }
+            if (onWatch != null) TextButton(onClick = onWatch) { Text("Watch") }
+            else TextButton(onClick = { runCatching { uri.openUri("https://www.youtube.com/watch?v=${tk.videoId}") } }) { Text("YouTube") }
             if (!tk.aiMade) TextButton(onClick = onRetry) { Text("Try AI again") }
         }
     }

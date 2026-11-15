@@ -187,13 +187,14 @@ fun MarketsScreen(vm: MainViewModel) {
                                 Text(w.symbol, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 ChangeText(w.changePct, size = 14)
                             }
-                            ToneChip(w.advice?.lean?.title ?: "No history for this size of move", leanTone(w.advice?.lean), Modifier.padding(top = 4.dp))
-                            w.advice?.lines?.firstOrNull()?.let { Text(it, fontSize = 12.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp)) }
+                            val c = plainCall(w)
+                            Text(c.action, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = com.shinobisondre.stockanalyzer.ui.theme.toneColor(c.tone), modifier = Modifier.padding(top = 4.dp))
+                            Text("Because: ${c.because}", fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
                         }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { vm.dismissSplash(); vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }) { Text("See quick wins") } },
+            confirmButton = { TextButton(onClick = { vm.dismissSplash(); vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }) { Text("Show me") } },
             dismissButton = { TextButton(onClick = { vm.dismissSplash() }) { Text("Later") } },
         )
     }

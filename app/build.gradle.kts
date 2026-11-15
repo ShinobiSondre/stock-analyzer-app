@@ -48,6 +48,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true // NewPipeExtractor uses java.nio APIs
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -97,6 +98,18 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // On-device OCR for importing broker screenshots (bundled model, works offline).
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Tyler Hill videos, the FaithScroll way: native playback (media3), stream lookup (NewPipeExtractor),
+    // YouTube proof-of-origin tokens made in a hidden WebView (RxJava + androidx.webkit), thumbnails (Coil).
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.media3:media3-database:1.5.1")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+    implementation("io.reactivex.rxjava3:rxjava:3.1.9")
+    implementation("io.reactivex.rxjava3:rxandroid:3.0.2")
+    implementation("androidx.webkit:webkit:1.12.1")
+    implementation("io.coil-kt:coil-compose:2.7.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
     testImplementation("junit:junit:4.13.2")
 }

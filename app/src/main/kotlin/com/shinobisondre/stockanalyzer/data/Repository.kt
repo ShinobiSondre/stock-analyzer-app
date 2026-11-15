@@ -442,11 +442,16 @@ class Repository(private val context: Context, val store: Store) {
     /** Transcript → AI summary of what Tyler thinks will happen (key quotes only if no AI answers). */
     suspend fun tylerSummarize(v: YtVideo, onStage: (String) -> Unit): TylerTake {
         onStage("Getting the transcript…")
-        val (info, pieces) = runCatching { YouTube.transcript(v.id) }.getOrDefault(null to null)
-        val text = pieces?.let { TylerTalk.clean(it) }?.takeIf { it.split(' ').size > 40 }
+        // Exactly FaithScroll's route: video page + YouTube's Android player for the caption list, then the
+        // caption file (plain link, else the website link with a proof-of-origin token).
+        val transcript = runCatching {
+            com.shinobisondre.stockanalyzer.video.StreamResolver.ensureInit()
+            com.shinobisondre.stockanalyzer.video.Transcripts.original(v.id)
+        }.getOrNull()
+        val info = runCatching { com.shinobisondre.stockanalyzer.video.WatchPage.info(v.id) }.getOrNull()
+        val text = transcript?.cues?.map { it.text }?.let { TylerTalk.clean(it) }?.takeIf { it.split(' ').size > 40 }
         val video = v.copy(
             description = info?.description?.takeIf { it.isNotBlank() } ?: v.description,
-            published = info?.publishDate?.takeIf { v.published.isBlank() } ?: v.published,
             title = v.title.ifBlank { info?.title ?: "" },
         )
         val keys = text?.let { TylerTalk.keyLines(it) } ?: emptyList()

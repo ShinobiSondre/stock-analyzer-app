@@ -323,6 +323,14 @@ object EngineSelfTest {
         val back = DayAfterBook.fromJson(book.toJson())
         check("eod json", back.us.buckets[DayAfter.key(1, null, 2, null)] == run && back.oslo == null && back.table("EQNR.OL") === back.us)
         near("clv", DayAfter.clv(105.0, 100.0, 110.0), 0.5, 1e-12)
+        val sell = DayAfter.plain(a, owned = true, costPct = 0.6, closeTime = "22:00")
+        check("plain sell", sell.action == "Sell before 22:00 today" && sell.because.contains("55 times out of 100") && sell.tone == Tone.SELL) { "$sell" }
+        check("plain dont buy", DayAfter.plain(a, owned = false, costPct = 0.6, closeTime = null).action == "Don't buy now")
+        check("plain buy", DayAfter.plain(b, owned = false, costPct = 0.1, closeTime = "16:20").action == "Buy now, sell tomorrow")
+        check("plain fees", DayAfter.plain(b, owned = false, costPct = 0.6, closeTime = null).action.startsWith("Don't buy"))
+        check("plain keep", DayAfter.plain(b, owned = true, costPct = 0.6, closeTime = null).action.startsWith("Keep it"))
+        check("plain closed", DayAfter.plain(a, owned = true, costPct = 0.6, closeTime = null).action == "Sell at tomorrow's open")
+        check("plain none", DayAfter.plain(null, owned = false, costPct = 0.6, closeTime = null).action == "Don't chase it")
     }
 
     private fun tyler() {

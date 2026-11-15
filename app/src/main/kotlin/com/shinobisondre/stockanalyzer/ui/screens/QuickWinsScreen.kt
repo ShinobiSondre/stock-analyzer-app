@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,17 +40,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shinobisondre.stockanalyzer.data.QuickWin
+import com.shinobisondre.stockanalyzer.engine.DayAfter
 import com.shinobisondre.stockanalyzer.engine.EodLean
+import com.shinobisondre.stockanalyzer.engine.PlainCall
 import com.shinobisondre.stockanalyzer.engine.Tone
 import com.shinobisondre.stockanalyzer.ui.ChangeText
 import com.shinobisondre.stockanalyzer.ui.EmptyState
 import com.shinobisondre.stockanalyzer.ui.F
 import com.shinobisondre.stockanalyzer.ui.MainViewModel
-import com.shinobisondre.stockanalyzer.ui.Pill
 import com.shinobisondre.stockanalyzer.ui.SectionCard
 import com.shinobisondre.stockanalyzer.ui.Sparkline
-import com.shinobisondre.stockanalyzer.ui.ToneChip
 import com.shinobisondre.stockanalyzer.ui.theme.Palette
+import com.shinobisondre.stockanalyzer.ui.theme.toneColor
 
 /** Lightning bolt (material "flash_on"), drawn here so the app doesn't need the big icon library. */
 val BoltIcon: ImageVector = materialIcon(name = "Filled.Bolt") {
@@ -71,7 +73,7 @@ fun QuickWinsScreen(vm: MainViewModel) {
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
-            ScreenHeader("Quick wins", "Up big today — take the money by the close, or hold?") {
+            ScreenHeader("Quick wins", "Jumped today — sell before the close, keep it, or buy?") {
                 IconButton(onClick = { vm.loadQuick(true) }, enabled = !q.running) { Icon(Icons.Filled.Refresh, "Refresh") }
             }
         }
@@ -97,73 +99,69 @@ fun QuickWinsScreen(vm: MainViewModel) {
             QuickWinCard(w, held?.shares, Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { vm.open(w.symbol) }
         }
         item {
-            SectionCard("How the lean is worked out", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), action = {
+            SectionCard("How it decides", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), action = {
                 TextButton(onClick = { how = !how }) { Text(if (how) "Hide" else "Show") }
             }) {
-                val book = vm.repo.dayAfter
-                Text("Every +3% day since 2005 on ~200 US and Oslo stocks (${book?.let { "%,d".format(it.us.base.n) } ?: "—"} US trading days in total), split by how big the move is, how heavy the volume is, where the price sits in the day's range, and the long-term trend.",
+                Text("We looked at every time a stock jumped 3% or more in a day since 2005 — about 54,000 jumps on ~200 US and Oslo stocks — and checked what it did the next day.",
                     fontSize = 13.sp, color = Palette.muted)
                 if (how) {
                     Spacer(Modifier.height(6.dp))
-                    Text("• \"Take profit by the close\": days like this closed lower the next session clearly more often than an ordinary day, and the average next-day move was negative.", fontSize = 13.sp)
-                    Text("• \"Holding overnight has paid\": they kept rising more often than usual, with a positive average.", fontSize = 13.sp)
-                    Text("• Otherwise there's no measurable edge either way.", fontSize = 13.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text("What stood out: big US up-days (+5–12%) that finish near the day's high have tended to slip the next session (43–46% up vs ~52% normally). Days that faded from their high have tended to bounce.", fontSize = 13.sp, color = Palette.muted)
-                    Text("Costs: selling US shares from a NOK account costs roughly 0.5–0.6% in FX + commission round trip on Nordnet; Oslo shares ~0.1%. Chasing a stock that is already up for a next-day exit rarely clears that.", fontSize = 13.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp))
-                    book?.let { Text("Data to ${it.dataTo}. Survivorship bias: the stock list is today's, so past losers that delisted are missing.", fontSize = 11.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp)) }
+                    Text("• Big jumps that end the day near the top have often dropped a bit the next day → sell before the close.", fontSize = 13.sp)
+                    Text("• Jumps that already slipped back from the top have often bounced the next day → keep it.", fontSize = 13.sp)
+                    Text("• Otherwise it's close to a coin flip.", fontSize = 13.sp)
+                    Text("Fees: a buy + sell of a US stock costs about 0.6% (currency exchange + commission on Nordnet), an Oslo stock about 0.1%. So buying something that already jumped rarely pays.",
+                        fontSize = 13.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp))
+                    vm.repo.dayAfter?.let { Text("Data up to ${it.dataTo}.", fontSize = 11.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp)) }
                 }
             }
         }
         item {
-            Text("Historical tendencies, not promises: even the strongest lean is wrong roughly 45% of the time. Not investment advice.",
+            Text("These are odds from the past, not promises — even the best pattern is wrong about 45 times out of 100. Not investment advice.",
                 color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(16.dp))
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** "Sell before 22:00 today — because …" for one mover. */
+fun plainCall(w: QuickWin): PlainCall = DayAfter.plain(w.advice, w.owned, w.costPct, if (w.sessionOpen) w.closeLocal else null)
+
 @Composable
 fun QuickWinCard(w: QuickWin, sharesHeld: Double?, modifier: Modifier = Modifier, onOpen: () -> Unit) {
-    SectionCard(w.symbol, modifier.clickable(onClick = onOpen), subtitle = w.name, action = {
+    var more by rememberSaveable(w.symbol) { mutableStateOf(false) }
+    val call = plainCall(w)
+    SectionCard(w.symbol, modifier.clickable(onClick = onOpen), subtitle = w.name + (if (w.owned) " · you own it" else if (w.watched) " · watchlist" else ""), action = {
         Column(horizontalAlignment = Alignment.End) {
             ChangeText(w.changePct, size = 18)
             Text(F.price(w.price, w.currency), fontSize = 13.sp, color = Palette.muted)
         }
     }) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            ToneChip(w.advice?.lean?.title ?: "No history for this size of move", leanTone(w.advice?.lean))
-            if (w.owned) Pill("You own it", Palette.accent)
-            else if (w.watched) Pill("Watchlist", Palette.accent)
-        }
-        if (w.intraday.size > 3) {
-            Spacer(Modifier.height(8.dp))
-            Sparkline(w.intraday, Modifier.fillMaxWidth().height(44.dp))
-        }
-        Spacer(Modifier.height(8.dp))
-        val facts = listOfNotNull(
-            w.rvol?.let { "Volume ${F.num(it, 1)}× normal" },
-            w.clv?.let { "at ${(it * 100).toInt()}% of today's range" },
-            w.fromHighPct?.let { if (it < -0.05) "${F.num(-it, 1)}% below the high" else "at the day's high" },
-            w.vwap?.let { v -> w.price?.let { p -> if (p >= v) "above VWAP" else "below VWAP" } },
-            w.above200?.let { if (it) "above 200-day" else "below 200-day" },
-        )
-        Text(facts.joinToString(" · "), fontSize = 12.sp, color = Palette.muted)
-        val timing = when {
-            w.sessionOpen && w.minutesToClose != null -> "Market closes ${w.closeLocal ?: ""} — in ${w.minutesToClose / 60} h ${w.minutesToClose % 60} min."
-            else -> "Market closed — this is today's final move. The lean is about tomorrow."
-        }
-        Text(timing, fontSize = 12.sp, color = Palette.text, modifier = Modifier.padding(top = 4.dp))
+        Text(call.action, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = toneColor(call.tone))
+        Text("Because: ${call.because}", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         if (sharesHeld != null && w.price != null) {
             val gain = sharesHeld * w.price * (w.changePct / (100 + w.changePct))
-            Text("Today's gain on your ${F.num(sharesHeld, if (sharesHeld % 1.0 == 0.0) 0 else 2)} shares: ≈ ${F.price(gain, w.currency)}", fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold, color = Palette.up, modifier = Modifier.padding(top = 4.dp))
+            Text("You're up about ${F.price(gain, w.currency)} today on your ${F.num(sharesHeld, if (sharesHeld % 1.0 == 0.0) 0 else 2)} shares.",
+                fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Palette.up, modifier = Modifier.padding(top = 6.dp))
         }
-        w.advice?.let { a ->
-            Spacer(Modifier.height(6.dp))
-            a.lines.forEach { Text(it, fontSize = 13.sp, modifier = Modifier.padding(vertical = 2.dp)) }
+        Text(
+            if (w.sessionOpen && w.minutesToClose != null) "Market closes at ${w.closeLocal ?: ""} (in ${w.minutesToClose / 60} h ${w.minutesToClose % 60} min)."
+            else "The market is closed now — today's jump is final.",
+            fontSize = 12.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp),
+        )
+        if (w.intraday.size > 3) {
+            Spacer(Modifier.height(8.dp))
+            Sparkline(w.intraday, Modifier.fillMaxWidth().height(40.dp))
         }
-        Text("Round-trip cost ≈ ${F.num(w.costPct, 1)}%", fontSize = 11.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp))
+        TextButton(onClick = { more = !more }) { Text(if (more) "Less" else "Why? Show the numbers") }
+        if (more) {
+            val facts = listOfNotNull(
+                w.rvol?.let { "Trading ${F.num(it, 1)}× more than usual" },
+                w.clv?.let { if (it >= 0.8) "Near today's high" else if (it < 0.5) "Slipped back from today's high" else "In the middle of today's range" },
+                w.vwap?.let { v -> w.price?.let { p -> if (p >= v) "above today's average price" else "below today's average price" } },
+            )
+            if (facts.isNotEmpty()) Text(facts.joinToString(" · "), fontSize = 12.sp, color = Palette.muted)
+            w.advice?.let { a -> a.lines.forEach { Text(it, fontSize = 12.sp, modifier = Modifier.padding(vertical = 2.dp)) } }
+            Text("Fees for a buy + sell: about ${F.num(w.costPct, 1)}%.", fontSize = 11.sp, color = Palette.muted, modifier = Modifier.padding(top = 4.dp))
+        }
     }
 }
 
@@ -177,9 +175,10 @@ fun QuickWinBanner(movers: List<QuickWin>, modifier: Modifier = Modifier, onClic
                 Text(w.symbol, fontWeight = FontWeight.Bold, modifier = Modifier.width(76.dp))
                 ChangeText(w.changePct, size = 13)
                 Spacer(Modifier.width(8.dp))
-                Text(w.advice?.lean?.title?.removePrefix("Lean: ") ?: "", fontSize = 12.sp, color = Palette.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                val c = plainCall(w)
+                Text(c.action, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = toneColor(c.tone), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             }
         }
-        Text("Tap for sell-by-the-close odds", fontSize = 12.sp, color = Palette.accent, modifier = Modifier.padding(top = 4.dp))
+        Text("Tap to see why", fontSize = 12.sp, color = Palette.accent, modifier = Modifier.padding(top = 4.dp))
     }
 }

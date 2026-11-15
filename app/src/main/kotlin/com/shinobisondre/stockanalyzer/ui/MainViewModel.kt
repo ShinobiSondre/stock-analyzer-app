@@ -139,6 +139,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var shotJob: Job? = null
     val tyler = MutableStateFlow(TylerState())
     private var tylerJob: Job? = null
+    /** Tyler video being watched in the app (null = none), and whether it fills the whole screen. */
+    val watching = MutableStateFlow<String?>(null)
+    val videoFull = MutableStateFlow(false)
+    /** Where each video was left off, so switching to/from full screen continues from the same second. */
+    val videoPos = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private var lastAutoUpdate = 0L
     private var backgroundInstall: Job? = null
 
@@ -198,6 +203,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun open(symbol: String) {
+        watching.value = null; videoFull.value = false
         val s = symbol.trim().uppercase()
         if (s.isEmpty()) return
         selected.value = s
@@ -206,6 +212,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun close() { selected.value = null }
+
+    fun watch(videoId: String) { selected.value = null; videoFull.value = false; watching.value = videoId }
+    fun stopWatching() { videoFull.value = false; watching.value = null }
+
+    /** YouTube's own player handed us its caption file: if that video was summarised without a transcript, redo it. */
+    fun onCaptionsCaptured(videoId: String) {
+        val tk = tyler.value.takes[videoId]
+        if (tk == null || tk.words == 0) resummarise(videoId)
+    }
 
     fun toggleWatch(symbol: String) = repo.store.updateAsync { st ->
         if (symbol in st.watchlist) st.copy(watchlist = st.watchlist - symbol) else st.copy(watchlist = st.watchlist + symbol)

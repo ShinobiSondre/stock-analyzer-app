@@ -89,24 +89,31 @@ fun AppRoot(vm: MainViewModel, fold: FoldInfo) {
     val selected by vm.selected.collectAsStateWithLifecycle()
     val st by vm.state.collectAsStateWithLifecycle()
     val unread = st.alerts.count { !it.read }
+    val watching by vm.watching.collectAsStateWithLifecycle()
+    val videoFull by vm.videoFull.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Palette.bg)) {
         // Z Fold cover screen ≈ 400-460 dp wide → compact. Inner screen ≈ 840-900 dp → two panes.
         val wide = maxWidth >= 600.dp
-        if (wide) WideLayout(vm, tab, selected, unread, fold) else CompactLayout(vm, tab, selected, unread, fold)
+        val w = watching
+        when {
+            w != null && videoFull -> com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, w, showClose = true)
+            wide -> WideLayout(vm, tab, selected, unread, fold, w)
+            else -> CompactLayout(vm, tab, selected, unread, fold, w)
+        }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(bottom = 72.dp))
     }
 }
 
 @Composable
-private fun CompactLayout(vm: MainViewModel, tab: Tab, selected: String?, unread: Int, fold: FoldInfo) {
+private fun CompactLayout(vm: MainViewModel, tab: Tab, selected: String?, unread: Int, fold: FoldInfo, watching: String?) {
     Scaffold(
         containerColor = Palette.bg,
         contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
         bottomBar = {
-            if (selected == null) NavigationBar(containerColor = Palette.surface) {
+            if (selected == null && watching == null) NavigationBar(containerColor = Palette.surface) {
                 // Settings lives behind the gear on the home page on the narrow screen.
                 Tab.entries.filter { it.inBottomBar }.forEach { t ->
                     NavigationBarItem(
@@ -121,7 +128,9 @@ private fun CompactLayout(vm: MainViewModel, tab: Tab, selected: String?, unread
         },
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-            if (selected != null) {
+            if (watching != null) {
+                com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, watching, showClose = true)
+            } else if (selected != null) {
                 BackHandler { vm.close() }
                 AnalysisScreen(vm, selected, showBack = true, tabletopTop = tabletopTop(fold))
             } else {
@@ -133,7 +142,7 @@ private fun CompactLayout(vm: MainViewModel, tab: Tab, selected: String?, unread
 }
 
 @Composable
-private fun WideLayout(vm: MainViewModel, tab: Tab, selected: String?, unread: Int, fold: FoldInfo) {
+private fun WideLayout(vm: MainViewModel, tab: Tab, selected: String?, unread: Int, fold: FoldInfo, watching: String?) {
     val density = LocalDensity.current
     val railWidth = 80.dp
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -169,7 +178,9 @@ private fun WideLayout(vm: MainViewModel, tab: Tab, selected: String?, unread: I
                 Box(Modifier.width(listWidth).fillMaxHeight()) { TabContent(vm, tab, twoPane = true) }
                 if (gap > 0.dp) Spacer(Modifier.width(gap).fillMaxHeight()) else Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.outline))
                 Box(Modifier.weight(1f).fillMaxHeight()) {
-                    if (selected != null) {
+                    if (watching != null) {
+                        com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, watching, showClose = true)
+                    } else if (selected != null) {
                         BackHandler { vm.close() }
                         AnalysisScreen(vm, selected, showBack = false, tabletopTop = tabletopTop(fold))
                     } else {
