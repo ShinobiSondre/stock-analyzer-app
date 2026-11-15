@@ -1,0 +1,71 @@
+name: Train model
+
+# Re-fits and re-validates the probability model whenever the engine or the
+# trainer changes. Results (model.json + MODEL_REPORT.md + logs) are pushed
+# to the `ci-model` branch; copy model.json into app/src/main/assets to ship it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'engine/**'
+      - 'trainer/**'
+      - '.github/workflows/train.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: train
+  cancel-in-progress: true
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache key (ISO week)
+        id: wk
+        run: echo "week=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/wf-cache
+          key: bars-${{ steps.wk.outputs.week }}-${{ github.run_id }}
+          restore-keys: bars-
+
+      - name: Build and test engine + trainer
+        run: |
+          set -o pipefail
+          ./gradlew :engine:test :trainer:installDist --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Train (walk-forward, ~200 tickers, 2004→today)
+        run: |
+          set -o pipefail
+          JAVA_OPTS="-Xmx6g" trainer/build/install/trainer/bin/trainer --cache ~/wf-cache --out out 2>&1 | tee train.log
+
+      - name: Publish results to the ci-model branch
+        if: always()
+        run: |
+          mkdir -p /tmp/pub
+          cp -r out/* /tmp/pub/ 2>/dev/null || true
+          cp build.log train.log /tmp/pub/ 2>/dev/null || true
+          for f in engine/build/test-results/test/*.xml; do [ -f "$f" ] && cp "$f" /tmp/pub/; done
+          echo "${GITHUB_SHA} ${{ job.status }} $(date -u +%FT%TZ)" > /tmp/pub/STATUS
+          cd /tmp/pub
+          git init -q
+          git checkout -q -b ci-model
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Model run ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" ci-model
