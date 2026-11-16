@@ -1,5 +1,9 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import com.shinobisondre.stockanalyzer.ui.AdaptiveGrid
+import com.shinobisondre.stockanalyzer.ui.cell
+import com.shinobisondre.stockanalyzer.ui.full
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,8 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -102,15 +105,15 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
         pickShots.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item {
+    AdaptiveGrid(contentPadding = PaddingValues(bottom = 24.dp)) {
+        full {
             ScreenHeader("Portfolio", "Values in ${st.settings.baseCurrency} · ${st.holdings.size} holdings") {
                 IconButton(onClick = { importing = true }) { Icon(Icons.Filled.Edit, "Import holdings") }
                 IconButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, "Add holding") }
                 IconButton(onClick = { vm.loadPortfolio(true) }) { Icon(Icons.Filled.Refresh, "Refresh") }
             }
         }
-        item {
+        full {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = pick, modifier = Modifier.weight(1f)) { Text("Import Nordnet screenshot") }
                 OutlinedButton(onClick = { importing = true }) { Text("Paste") }
@@ -119,26 +122,26 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
                 color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp))
         }
         if (st.holdings.isEmpty()) {
-            item {
+            full {
                 EmptyState("No holdings yet", "Import a screenshot of your Nordnet holdings, add positions one by one, or paste them (e.g. \"GOOGL 10, NVDA 21, MU 13 @ 984\"). Every position is valued in ${st.settings.baseCurrency} and gets its own call.")
             }
         } else {
-            item {
+            full {
                 Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(5 to "1 week", 10 to "2 weeks", 22 to "1 month").forEach { (d, l) -> SmallChip(l, horizon == d) { vm.setHorizon(d) } }
                 }
             }
             when (val p = pf) {
                 is Load.Ok -> {
-                    item { TotalsCard(p.v, Modifier.padding(horizontal = 12.dp, vertical = 8.dp).appear(0)) }
+                    cell { TotalsCard(p.v, Modifier.padding(horizontal = 12.dp, vertical = 8.dp).appear(0)) }
                     items(p.v.rows, key = { "h-" + it.holding.symbol }) { r ->
                         HoldingRow(r, p.v.base, onOpen = { vm.open(r.holding.symbol) }, onEdit = { editing = r.holding }, onRemove = { vm.removeHolding(r.holding.symbol) })
                         HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
                     }
-                    if (p.v.totals.sectors.size > 1) item { SectorsCard(p.v, Modifier.padding(12.dp)) }
+                    if (p.v.totals.sectors.size > 1) cell { SectorsCard(p.v, Modifier.padding(12.dp)) }
                 }
-                is Load.Err -> item { ErrorBox(p.msg) { vm.loadPortfolio(true) } }
-                else -> item { Loading(text = "Valuing ${st.holdings.size} holdings…") }
+                is Load.Err -> full { ErrorBox(p.msg) { vm.loadPortfolio(true) } }
+                else -> full { Loading(text = "Valuing ${st.holdings.size} holdings…") }
             }
         }
     }

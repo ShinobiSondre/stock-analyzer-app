@@ -9,6 +9,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -92,71 +94,137 @@ fun RippleScreen(vm: MainViewModel) {
     val owned = st.holdings.map { it.symbol }.toSet()
     val picks = (st.holdings.map { it.symbol } + Ripple.POPULAR).distinct()
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
-        item {
-            ScreenHeader("Ripples", "If one stock does well, what tends to rise with it?") {
-                IconButton(onClick = { vm.loadRipple(root, force = true) }) { Icon(Icons.Filled.Refresh, "Refresh") }
-            }
-        }
-        item {
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                picks.forEach { s -> SmallChip(s.removeSuffix(".OL") + if (s in owned) " ★" else "", s == root) { vm.loadRipple(s) } }
-            }
-        }
-        item {
-            OutlinedTextField(
-                value = query, onValueChange = { query = it.uppercase() },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                placeholder = { Text("Any ticker (e.g. PLTR, EQNR.OL)") },
-                leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = RoundedCornerShape(14.dp),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = { if (query.isNotBlank()) { vm.loadRipple(query.trim()); query = ""; focus.clearFocus() } }),
-            )
-        }
-        when (val v = r) {
-            is Load.Ok -> {
-                val view = v.v
-                item(key = "root-${view.root}") { RootCard(vm, view, cores[view.root], Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear()) }
-                item {
-                    Text(
-                        if (view.fromYahoo) "No hand-made map for ${view.root} yet — these are stocks Yahoo says people watch alongside it, ranked by how closely they actually moved with it."
-                        else "Companies connected to ${view.root.removeSuffix(".OL")}, strongest movers first in each branch. Tap one for its analysis, or \"its ripples\" to follow the chain.",
-                        color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val width = maxWidth
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
+            item {
+                ScreenHeader("Ripples", "If one stock does well, what tends to rise with it?") {
+                    IconButton(onClick = { vm.loadRipple(root, force = true) }) { Icon(Icons.Filled.Refresh, "Refresh") }
                 }
-                // The tree: groups in a fixed order, each sorted by how much of the leader's move carries over.
-                val groups = Link.entries.mapNotNull { l ->
-                    val kids = view.children.filter { it.node.link == l }.sortedByDescending { it.stat?.score ?: -9.0 }
-                    if (kids.isEmpty()) null else l to kids
+            }
+            item {
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    picks.forEach { s -> SmallChip(s.removeSuffix(".OL") + if (s in owned) " ★" else "", s == root) { vm.loadRipple(s) } }
                 }
-                var row = 0
-                groups.forEachIndexed { gi, (link, kids) ->
-                    val lastGroup = gi == groups.lastIndex
-                    val rowIndex = row++
-                    item(key = "g-${view.root}-${link.name}") {
-                        TreeRow(depth = 0, lastAt = listOf(lastGroup), modifier = Modifier.appear(rowIndex)) {
-                            Column(Modifier.padding(vertical = 10.dp)) {
-                                Text(link.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Palette.accent)
-                                Text(link.plain, fontSize = 12.sp, color = Palette.muted)
+            }
+            item {
+                OutlinedTextField(
+                    value = query, onValueChange = { query = it.uppercase() },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    placeholder = { Text("Any ticker (e.g. PLTR, EQNR.OL)") },
+                    leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { if (query.isNotBlank()) { vm.loadRipple(query.trim()); query = ""; focus.clearFocus() } }),
+                )
+            }
+            when (val v = r) {
+                is Load.Ok -> {
+                    val view = v.v
+                    val groups = Link.entries.mapNotNull { l ->
+                        val kids = view.children.filter { it.node.link == l }.sortedByDescending { it.stat?.score ?: -9.0 }
+                        if (kids.isEmpty()) null else l to kids
+                    }
+                    // Wide screen: an org-chart waterfall with one column per branch. Narrow: a vertical tree.
+                    val columns = groups.size.coerceAtLeast(1)
+                    val wide = width >= 720.dp && (width - 24.dp) / columns >= 190.dp
+                    item {
+                        Text(
+                            if (view.fromYahoo) "No hand-made map for ${view.root} yet — these are stocks Yahoo says people watch alongside it, ranked by how closely they actually moved with it."
+                            else "Companies connected to ${view.root.removeSuffix(".OL")}, strongest movers first in each branch. Tap one for its analysis, or \"its ripples\" to follow the chain.",
+                            color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 2.dp),
+                        )
+                    }
+                    item(key = "root-${view.root}") {
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = if (wide) Alignment.CenterHorizontally else Alignment.Start) {
+                            RootCard(vm, view, cores[view.root],
+                                (if (wide) Modifier.widthIn(max = 560.dp) else Modifier).padding(start = 12.dp, end = 12.dp, top = 8.dp).appear())
+                            // The trunk: from the middle card down into the tree.
+                            if (!wide) Box(Modifier.padding(start = TRUNK_X - 1.dp).width(2.dp).height(10.dp).background(LINE))
+                        }
+                    }
+                    if (wide) {
+                        item(key = "wide-${view.root}") { WideTree(vm, view, groups, owned) }
+                    } else {
+                        var row = 0
+                        groups.forEachIndexed { gi, (link, kids) ->
+                            val lastGroup = gi == groups.lastIndex
+                            val rowIndex = row++
+                            item(key = "g-${view.root}-${link.name}") {
+                                TreeRow(depth = 0, lastAt = listOf(lastGroup), modifier = Modifier.appear(rowIndex)) {
+                                    GroupPill(link, Modifier.padding(top = 8.dp, bottom = 4.dp))
+                                }
+                            }
+                            kids.forEachIndexed { ki, kid ->
+                                val idx = row++
+                                item(key = "k-${view.root}-${link.name}-${kid.node.symbol}") {
+                                    TreeRow(depth = 1, lastAt = listOf(lastGroup, ki == kids.lastIndex), modifier = Modifier.appear(idx)) {
+                                        NodeCard(vm, view.root, kid, kid.node.symbol in owned)
+                                    }
+                                }
                             }
                         }
                     }
+                    item {
+                        Text("Moving together over the last 2 years doesn't guarantee they will again — it shows who usually gets dragged along. Not investment advice.",
+                            color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(16.dp))
+                    }
+                }
+                is Load.Err -> item { ErrorBox(v.msg) { vm.loadRipple(root, force = true) } }
+                else -> item { Loading(text = "Measuring what moves with ${root.removeSuffix(".OL")}…") }
+            }
+        }
+    }
+}
+
+private val LINE get() = Palette.accent.copy(alpha = 0.45f)
+/** x of the tree's main line, measured from the screen edge (row padding + half a step). */
+private val TRUNK_X = 14.dp + 12.dp
+
+/** A branch title as a soft pill: what the connection is, in plain words. */
+@Composable
+private fun GroupPill(link: Link, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Palette.accent.copy(alpha = 0.12f)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Text(link.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Palette.accent)
+        Text(link.plain, fontSize = 12.sp, color = Palette.muted)
+    }
+}
+
+/**
+ * Wide screens: the middle stock on top, a line splitting into one column per branch,
+ * and each branch's companies hanging below it — drawn in as the tree appears.
+ */
+@Composable
+private fun WideTree(vm: MainViewModel, view: Repository.RippleView, groups: List<Pair<Link, List<Repository.RippleChild>>>, owned: Set<String>) {
+    val draw = remember(view.root) { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(view.root) { draw.animateTo(1f, tween(700, easing = FastOutSlowInEasing)) }
+    val gapDp = 14.dp
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(44.dp)) {
+            val n = groups.size
+            val gap = gapDp.toPx()
+            val colW = (size.width - gap * (n - 1)) / n
+            val centers = (0 until n).map { it * (colW + gap) + colW / 2 }
+            val midX = size.width / 2
+            val midY = size.height * 0.45f
+            val w = 2.dp.toPx()
+            val p = draw.value
+            // Trunk, then the bar spreading out both ways, then a drop into every branch.
+            drawLine(LINE, Offset(midX, 0f), Offset(midX, midY * (p * 3).coerceAtMost(1f)), w, StrokeCap.Round)
+            val spread = ((p - 0.33f) * 3).coerceIn(0f, 1f)
+            if (spread > 0f && n > 1) drawLine(LINE, Offset(midX - (midX - centers.first()) * spread, midY), Offset(midX + (centers.last() - midX) * spread, midY), w, StrokeCap.Round)
+            val drop = ((p - 0.66f) * 3).coerceIn(0f, 1f)
+            if (drop > 0f) centers.forEach { x -> drawLine(LINE, Offset(x, midY), Offset(x, midY + (size.height - midY) * drop), w, StrokeCap.Round) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gapDp)) {
+            groups.forEachIndexed { gi, (link, kids) ->
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    GroupPill(link, Modifier.fillMaxWidth().appear(gi))
                     kids.forEachIndexed { ki, kid ->
-                        val idx = row++
-                        item(key = "k-${view.root}-${link.name}-${kid.node.symbol}") {
-                            TreeRow(depth = 1, lastAt = listOf(lastGroup, ki == kids.lastIndex), modifier = Modifier.appear(idx)) {
-                                NodeCard(vm, view.root, kid, kid.node.symbol in owned)
-                            }
-                        }
+                        Box(Modifier.width(2.dp).height(12.dp).background(LINE).appear(gi + ki + 1))
+                        Box(Modifier.appear(gi + ki + 1)) { NodeCard(vm, view.root, kid, kid.node.symbol in owned) }
                     }
                 }
-                item {
-                    Text("Moving together over the last 2 years doesn't guarantee they will again — it shows who usually gets dragged along. Not investment advice.",
-                        color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(16.dp))
-                }
             }
-            is Load.Err -> item { ErrorBox(v.msg) { vm.loadRipple(root, force = true) } }
-            else -> item { Loading(text = "Measuring what moves with ${root.removeSuffix(".OL")}…") }
         }
     }
 }
@@ -166,8 +234,8 @@ private fun RootCard(vm: MainViewModel, v: Repository.RippleView, core: Load<com
     val c = (core as? Load.Ok)?.v
     SectionCard(v.root.removeSuffix(".OL"), modifier, subtitle = v.rootName) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(12.dp).pulse().clip(CircleShape).background(toneColor(c?.analysis?.verdict?.call?.tone ?: com.shinobisondre.stockanalyzer.engine.Tone.NEUTRAL)))
-            Spacer(Modifier.width(10.dp))
+            Box(Modifier.padding(start = 2.dp).size(10.dp).pulse().clip(CircleShape).background(toneColor(c?.analysis?.verdict?.call?.tone ?: com.shinobisondre.stockanalyzer.engine.Tone.NEUTRAL)))
+            Spacer(Modifier.width(14.dp))
             Text(F.price(v.rootPrice, v.rootCurrency), fontWeight = FontWeight.Bold, fontSize = 20.sp)
             Spacer(Modifier.width(10.dp))
             ChangeText(v.rootChange, size = 15)
@@ -238,32 +306,33 @@ private fun StrengthBars(s: Strength) {
 }
 
 /**
- * A row of the tree with its connector lines: for each ancestor level a vertical line
- * (unless that branch already ended), and an elbow into this row.
+ * A row of the vertical tree with its connector lines: for each ancestor level a vertical
+ * line (unless that branch already ended), and an elbow that stops short of the content
+ * with a small dot, so titles never touch the lines.
  */
 @Composable
 private fun TreeRow(depth: Int, lastAt: List<Boolean>, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    val step: Dp = 22.dp
-    val lineColor = Palette.accent.copy(alpha = 0.45f)
+    val step: Dp = 24.dp
+    val anchor: Dp = 26.dp // level with the first line of text in a pill or card
+    val lineColor = LINE
     Row(modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(start = 14.dp, end = 12.dp)) {
         Box(Modifier.width(step * (depth + 1)).fillMaxHeight().drawBehind {
             val w = 2.dp.toPx()
             val stepPx = step.toPx()
+            val midY = anchor.toPx()
             for (level in 0..depth) {
                 val x = level * stepPx + stepPx / 2
-                val isThis = level == depth
                 val last = lastAt.getOrElse(level) { false }
-                if (!isThis) {
-                    // Ancestor branch still running below?
+                if (level < depth) {
                     if (!last) drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), w)
                 } else {
-                    val midY = if (depth == 0) 28.dp.toPx() else 30.dp.toPx()
                     drawLine(lineColor, Offset(x, 0f), Offset(x, if (last) midY else size.height), w, StrokeCap.Round)
-                    drawLine(lineColor, Offset(x, midY), Offset(size.width, midY), w, StrokeCap.Round)
-                    drawCircle(lineColor, 3.5.dp.toPx(), Offset(size.width - 2.dp.toPx(), midY))
+                    val endX = size.width - 4.dp.toPx()
+                    drawLine(lineColor, Offset(x, midY), Offset(endX, midY), w, StrokeCap.Round)
+                    drawCircle(Palette.accent, 3.dp.toPx(), Offset(endX, midY))
                 }
             }
         })
-        Box(Modifier.weight(1f)) { content() }
+        Box(Modifier.weight(1f).padding(start = 10.dp)) { content() }
     }
 }

@@ -2,6 +2,8 @@ package com.shinobisondre.stockanalyzer.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -208,25 +210,36 @@ private fun WideLayout(vm: MainViewModel, tab: Tab, selected: String?, unread: I
                     Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { TabContent(vm, tab, twoPane = true) }
                 }
             } else {
-                Box(Modifier.width(listWidth).fillMaxHeight()) {
+                // Split only when there's something to show on the right (a stock or a video), or when the
+                // phone is half-folded like a book (the hinge is the natural divider). Otherwise the tab
+                // gets the whole screen and lays its cards out in columns.
+                val split = selected != null || watching != null || hinge != null
+                val listW by animateDpAsState(if (split) listWidth else contentWidth, tween(380, easing = FastOutSlowInEasing), label = "list")
+                val pane = when { watching != null -> "v:$watching"; selected != null -> "s:$selected"; else -> "none" }
+                // Keep showing the last stock/video while the pane slides shut.
+                val lastPane = remember { arrayOf("none") }
+                if (pane != "none") lastPane[0] = pane
+                Box(Modifier.width(listW).fillMaxHeight()) {
                     AnimatedContent(tab, transitionSpec = { (fadeIn(tween(260)) + slideInVertically(tween(300)) { it / 30 }) togetherWith fadeOut(tween(140)) }, label = "tab") { t ->
                         TabContent(vm, t, twoPane = true)
                     }
                 }
-                if (gap > 0.dp) Spacer(Modifier.width(gap).fillMaxHeight()) else Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.outline))
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    val pane = when { watching != null -> "v:$watching"; selected != null -> "s:$selected"; else -> "none" }
-                    AnimatedContent(pane, transitionSpec = {
-                        (fadeIn(tween(280)) + slideInHorizontally(tween(320)) { it / 12 }) togetherWith fadeOut(tween(160))
-                    }, label = "pane") { key ->
-                        when {
-                            key.startsWith("v:") -> com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, key.removePrefix("v:"), showClose = true)
-                            key.startsWith("s:") -> {
-                                BackHandler { vm.close() }
-                                AnalysisScreen(vm, key.removePrefix("s:"), showBack = false, tabletopTop = tabletopTop(fold))
-                            }
-                            else -> Column(Modifier.fillMaxSize(), verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
-                                EmptyState("Pick a stock", "Tap any symbol on the left — the full analysis opens here. Unfolded, the list and the analysis sit side by side.")
+                if (listW < contentWidth - 2.dp) {
+                    if (gap > 0.dp) Spacer(Modifier.width(gap).fillMaxHeight()) else Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.outline))
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        val show = if (pane == "none" && hinge == null) lastPane[0] else pane
+                        AnimatedContent(show, transitionSpec = {
+                            (fadeIn(tween(280)) + slideInHorizontally(tween(320)) { it / 12 }) togetherWith fadeOut(tween(160))
+                        }, label = "pane") { key ->
+                            when {
+                                key.startsWith("v:") -> com.shinobisondre.stockanalyzer.ui.screens.VideoScreen(vm, key.removePrefix("v:"), showClose = true)
+                                key.startsWith("s:") -> {
+                                    if (selected != null) BackHandler { vm.close() }
+                                    AnalysisScreen(vm, key.removePrefix("s:"), showBack = true, tabletopTop = tabletopTop(fold))
+                                }
+                                else -> Column(Modifier.fillMaxSize(), verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
+                                    EmptyState("Pick a stock", "Tap any stock on the left — its analysis opens here, next to the list.")
+                                }
                             }
                         }
                     }

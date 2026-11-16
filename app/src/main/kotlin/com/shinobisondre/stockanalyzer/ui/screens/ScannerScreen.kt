@@ -1,5 +1,9 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import com.shinobisondre.stockanalyzer.ui.AdaptiveGrid
+import com.shinobisondre.stockanalyzer.ui.cell
+import com.shinobisondre.stockanalyzer.ui.full
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -14,8 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -49,9 +52,9 @@ fun ScannerScreen(vm: MainViewModel) {
     val scan by vm.scan.collectAsStateWithLifecycle()
     val shown = if (scan.bullishOnly) scan.results.filter { it.analysis.verdict.call.bullish } else scan.results
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item { ScreenHeader("Scanner", "Rank a list by the model's 2-week odds") }
-        item {
+    AdaptiveGrid(contentPadding = PaddingValues(bottom = 24.dp)) {
+        full { ScreenHeader("Scanner", "Rank a list by the model's 2-week odds") }
+        full {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Universe.entries.forEach { u -> SmallChip(u.label, scan.universe == u) { vm.setUniverse(u) } }
             }
@@ -71,14 +74,14 @@ fun ScannerScreen(vm: MainViewModel) {
                     color = Palette.muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             }
         }
-        if (scan.results.isEmpty() && !scan.running) item {
+        if (scan.results.isEmpty() && !scan.running) full {
             EmptyState("Nothing scanned yet", "Pick a list and run the scan. Each stock gets the same full analysis as the detail screen, sorted by its probability of being higher in two weeks.")
         }
         items(shown, key = { "scan-" + it.symbol }) { c ->
             ScanRow(c) { vm.open(c.symbol) }
             HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
         }
-        if (shown.isNotEmpty()) item {
+        if (shown.isNotEmpty()) full {
             Text("Bullish calls are rare by design (top ~20% of odds, never closer than 1–4 points to the base rate). Most days most stocks have no edge — HOLD is the honest answer.",
                 color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(16.dp))
         }

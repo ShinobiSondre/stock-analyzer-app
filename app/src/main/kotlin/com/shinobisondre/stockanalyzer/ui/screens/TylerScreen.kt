@@ -1,5 +1,9 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import com.shinobisondre.stockanalyzer.ui.AdaptiveGrid
+import com.shinobisondre.stockanalyzer.ui.cell
+import com.shinobisondre.stockanalyzer.ui.full
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -28,8 +32,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -86,15 +89,15 @@ fun TylerScreen(vm: MainViewModel) {
     val latestAi = takes.firstOrNull { it.aiMade }
     var diag by remember { mutableStateOf(false) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item {
+    AdaptiveGrid(contentPadding = PaddingValues(bottom = 24.dp)) {
+        full {
             ScreenHeader("Tyler Hill", "What he thinks will happen · Tyler Hill Stocks on YouTube") {
                 IconButton(onClick = { diag = true }) { Icon(Icons.Filled.Info, "Diagnostics") }
                 IconButton(onClick = { vm.loadTyler(true) }, enabled = !t.loading) { Icon(Icons.Filled.Refresh, "Refresh") }
             }
         }
-        t.error?.let { e -> item { ErrorBox(e) { vm.loadTyler(true) } } }
-        if (t.loading && takes.isEmpty()) item {
+        t.error?.let { e -> full { ErrorBox(e) { vm.loadTyler(true) } } }
+        if (t.loading && takes.isEmpty()) full {
             Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Palette.accent)
                 Text("Fetching his latest videos…", color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
@@ -103,7 +106,7 @@ fun TylerScreen(vm: MainViewModel) {
 
         // ── His current view, in one card ──
         latestAi?.let { lt ->
-            item {
+            cell {
                 SectionCard("His latest view", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), subtitle = ytDate(lt.published)) {
                     ToneChip(stanceLabel(lt.stance), lt.tone)
                     Spacer(Modifier.height(6.dp))
@@ -119,7 +122,7 @@ fun TylerScreen(vm: MainViewModel) {
         val perTicker = takes.flatMap { tk -> tk.calls.filter { it.ticker.isNotBlank() }.map { it.ticker to (tk to it) } }
             .distinctBy { it.first }.map { it.second }
             .sortedWith(compareByDescending<Pair<TylerTake, TylerCall>> { it.second.ticker in owned }.thenByDescending { it.first.published })
-        if (perTicker.isNotEmpty()) item {
+        if (perTicker.isNotEmpty()) cell {
             SectionCard("Stocks he's talked about", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), subtitle = "His most recent call on each — yours first") {
                 perTicker.take(14).forEach { (tk, c) ->
                     Row(Modifier.fillMaxWidth().clickable { vm.open(c.ticker) }.padding(vertical = 5.dp), verticalAlignment = Alignment.Top) {
@@ -154,10 +157,10 @@ fun TylerScreen(vm: MainViewModel) {
             TakeCard(tk, owned, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), onTicker = { vm.open(it) }, onRetry = { vm.resummarise(tk.videoId) },
                 onWatch = { vm.watch(tk.videoId) })
         }
-        if (!t.loading && takes.isEmpty() && pending.isEmpty() && t.error == null && t.at > 0) item {
+        if (!t.loading && takes.isEmpty() && pending.isEmpty() && t.error == null && t.at > 0) full {
             EmptyState("No videos found", "Couldn't find recent uploads on the Tyler Hill Stocks channel. Pull to refresh in a bit.")
         }
-        item {
+        full {
             Text("Summaries are written by a free AI model (Llama 3.3 70B via OVHcloud, no account) from YouTube's captions — or, when YouTube won't share them, from listening to the video on your phone with Whisper. Either can mishear tickers and numbers, so check the video before acting. The views are Tyler's, not investment advice.",
                 color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(16.dp))
         }

@@ -1,5 +1,9 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import com.shinobisondre.stockanalyzer.ui.AdaptiveGrid
+import com.shinobisondre.stockanalyzer.ui.cell
+import com.shinobisondre.stockanalyzer.ui.full
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,8 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
@@ -62,8 +65,8 @@ fun AlertsScreen(vm: MainViewModel) {
         if (section == "Alerts") vm.markAlertsRead()
         if (section == "Track record") vm.loadTrack()
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item {
+    AdaptiveGrid(contentPadding = PaddingValues(bottom = 24.dp)) {
+        full {
             ScreenHeader("Alerts & accuracy") {}
             Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("Alerts", "Track record", "Model").forEach { s -> SmallChip(s, section == s) { section = s } }
@@ -71,7 +74,7 @@ fun AlertsScreen(vm: MainViewModel) {
         }
         when (section) {
             "Alerts" -> {
-                item {
+                full {
                     Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { vm.runWatcherNow() }) { Text("Check now") }
                         TextButton(onClick = { vm.clearAlerts() }, enabled = st.alerts.isNotEmpty()) { Text("Clear all") }
@@ -79,7 +82,7 @@ fun AlertsScreen(vm: MainViewModel) {
                         Text(if (st.settings.alertsEnabled) "every ${st.settings.alertIntervalMin} min" else "background checks off", color = Palette.muted, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
                     }
                 }
-                if (st.alerts.isEmpty()) item {
+                if (st.alerts.isEmpty()) full {
                     EmptyState("No alerts yet", "The watcher checks your portfolio and watchlist in the background: call changes (judged on completed daily bars, so no intraday flip-flopping), big moves, Tyler 3/4-stacks, new measured setups and market regime changes.")
                 }
                 items(st.alerts, key = { it.id }) { a ->
@@ -87,14 +90,14 @@ fun AlertsScreen(vm: MainViewModel) {
                     HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
                 }
             }
-            "Track record" -> item {
+            "Track record" -> full {
                 when (val t = track) {
                     is Load.Ok -> TrackSection(t.v, vm)
                     is Load.Err -> ErrorBox(t.msg) { vm.loadTrack() }
                     else -> Loading(text = "Grading logged calls against what happened…")
                 }
             }
-            else -> item { ModelSection(vm.repo.model) }
+            else -> full { ModelSection(vm.repo.model) }
         }
     }
 }

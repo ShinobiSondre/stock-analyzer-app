@@ -1,5 +1,9 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import com.shinobisondre.stockanalyzer.ui.AdaptiveGrid
+import com.shinobisondre.stockanalyzer.ui.cell
+import com.shinobisondre.stockanalyzer.ui.full
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,9 +17,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.materialIcon
@@ -76,25 +79,25 @@ fun QuickWinsScreen(vm: MainViewModel) {
     LaunchedEffect(Unit) { vm.loadQuick() }
     var how by remember { mutableStateOf(false) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item {
+    AdaptiveGrid(contentPadding = PaddingValues(bottom = 24.dp)) {
+        full {
             ScreenHeader("Quick wins", "Jumped today — sell before the close, keep it, or buy?") {
                 IconButton(onClick = { vm.loadQuick(true) }, enabled = !q.running) { Icon(Icons.Filled.Refresh, "Refresh") }
             }
         }
-        item {
+        full {
             FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SmallChip("Mine + watchlist", !q.includeMarket) { vm.setQuickMarket(false) }
                 SmallChip("Whole market", q.includeMarket) { vm.setQuickMarket(true) }
             }
         }
-        if (q.running) item {
+        if (q.running) full {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text(if (q.total > 0) "Checking ${q.done} of ${q.total} stocks…" else "Finding today's movers…", color = Palette.muted, fontSize = 13.sp)
                 LinearProgressIndicator(progress = { if (q.total > 0) q.done.toFloat() / q.total else 0f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), color = Palette.accent)
             }
         }
-        if (!q.running && q.at > 0 && q.items.isEmpty()) item {
+        if (!q.running && q.at > 0 && q.items.isEmpty()) full {
             EmptyState("Nothing up ${q.minMove.toInt()}%+ right now",
                 "Quick wins lists stocks that are up at least ${q.minMove.toInt()}% today" + (if (q.includeMarket) " among your holdings, watchlist, Yahoo's top gainers and ~150 large US and Oslo names." else " among your holdings and watchlist.") +
                     " Check back while the market is open (Oslo 09:00–16:20, New York 15:30–22:00 Norwegian time).")
@@ -106,14 +109,14 @@ fun QuickWinsScreen(vm: MainViewModel) {
             val buys = others.filter { plainCall(it).tone == Tone.BUY }
             val skips = others.filter { plainCall(it).tone != Tone.BUY }
             if (mine.isNotEmpty()) {
-                item(key = "h-mine") { GroupHeader("Yours — sell or keep?", "${mine.size} of your stocks jumped today", Palette.accent, Modifier.appear(0)) }
+                full("h-mine") { GroupHeader("Yours — sell or keep?", "${mine.size} of your stocks jumped today", Palette.accent, Modifier.appear(0)) }
                 itemsIndexed(mine, key = { _, w -> "qw-m-" + w.symbol }) { i, w ->
                     val held = st.holdings.firstOrNull { it.symbol == w.symbol }
                     QuickWinCard(w, held?.shares, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(i + 1)) { vm.open(w.symbol) }
                 }
             }
-            item(key = "h-buy") { GroupHeader("Worth buying", if (buys.isEmpty()) "Nothing right now" else "${buys.size} where jumps like this usually kept going", Palette.up, Modifier.appear(1)) }
-            if (buys.isEmpty()) item(key = "buy-none") {
+            full("h-buy") { GroupHeader("Worth buying", if (buys.isEmpty()) "Nothing right now" else "${buys.size} where jumps like this usually kept going", Palette.up, Modifier.appear(1)) }
+            if (buys.isEmpty()) full("buy-none") {
                 Text("Stocks that already jumped today usually don't keep rising enough to beat the fees. Check back later — this updates as prices move.",
                     color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             }
@@ -121,13 +124,13 @@ fun QuickWinsScreen(vm: MainViewModel) {
                 QuickWinCard(w, null, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(i + 2)) { vm.open(w.symbol) }
             }
             if (skips.isNotEmpty()) {
-                item(key = "h-skip") { GroupHeader("Don't buy", "${skips.size} that jumped but usually stall or slip back", Palette.down, Modifier.appear(2)) }
+                full("h-skip") { GroupHeader("Don't buy", "${skips.size} that jumped but usually stall or slip back", Palette.down, Modifier.appear(2)) }
                 itemsIndexed(skips, key = { _, w -> "qw-s-" + w.symbol }) { i, w ->
                     QuickWinCard(w, null, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(i + 3)) { vm.open(w.symbol) }
                 }
             }
         }
-        item {
+        full {
             SectionCard("How it decides", Modifier.padding(horizontal = 12.dp, vertical = 6.dp), action = {
                 TextButton(onClick = { how = !how }) { Text(if (how) "Hide" else "Show") }
             }) {
@@ -144,7 +147,7 @@ fun QuickWinsScreen(vm: MainViewModel) {
                 }
             }
         }
-        item {
+        full {
             Text("These are odds from the past, not promises — even the best pattern is wrong about 45 times out of 100. Not investment advice.",
                 color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(16.dp))
         }

@@ -1,5 +1,9 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import com.shinobisondre.stockanalyzer.ui.AdaptiveGrid
+import com.shinobisondre.stockanalyzer.ui.cell
+import com.shinobisondre.stockanalyzer.ui.full
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,8 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -103,8 +106,8 @@ fun MarketsScreen(vm: MainViewModel) {
     LaunchedEffect(Unit) { vm.autoUpdate() }
     LaunchedEffect(movers.map { it.symbol }) { vm.maybeSplash(movers) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item {
+    AdaptiveGrid(contentPadding = PaddingValues(bottom = 24.dp)) {
+        full {
             ScreenHeader("Home", "Your stocks and the market, in plain words") {
                 IconButton(onClick = { vm.refreshAll() }) { Icon(Icons.Filled.Refresh, "Refresh") }
                 val unread = st.alerts.count { !it.read }
@@ -116,12 +119,8 @@ fun MarketsScreen(vm: MainViewModel) {
                 IconButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.SETTINGS }) { Icon(Icons.Filled.Settings, "Settings") }
             }
         }
-        if (up.available != null) item { UpdateBanner(vm, up, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
-        item(key = "today") { TodayCard(vm, movers, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).appear(0)) }
-        if (movers.isNotEmpty()) item {
-            QuickWinBanner(movers, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }
-        }
-        item {
+        if (up.available != null) full { UpdateBanner(vm, up, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
+        full {
             OutlinedTextField(
                 value = query,
                 onValueChange = { vm.search(it) },
@@ -152,10 +151,14 @@ fun MarketsScreen(vm: MainViewModel) {
                     TextButton(onClick = { vm.toggleWatch(h.symbol) }) { Text(if (inList) "Watching" else "+ Watch") }
                 }
             }
-            item { HorizontalDivider(Modifier.padding(vertical = 6.dp), color = Palette.outline) }
+            full { HorizontalDivider(Modifier.padding(vertical = 6.dp), color = Palette.outline) }
         }
-        item { MarketCard(market, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(1)) { vm.refreshMarket(true) } }
-        item(key = "ideas") {
+        cell("today") { TodayCard(vm, movers, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).appear(0)) }
+        if (movers.isNotEmpty()) cell {
+            QuickWinBanner(movers, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.QUICK }
+        }
+        cell { MarketCard(market, Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(1)) { vm.refreshMarket(true) } }
+        cell("ideas") {
             SectionCard("Find new ideas", Modifier.padding(horizontal = 12.dp, vertical = 6.dp).appear(2), subtitle = "Two ways to look for your next stock") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     androidx.compose.material3.OutlinedButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.SCANNER }, modifier = Modifier.weight(1f)) { Text("Best odds now") }
@@ -163,14 +166,14 @@ fun MarketsScreen(vm: MainViewModel) {
                 }
             }
         }
-        item {
+        full {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Watchlist", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Text("odds ↑ in 2 wks", color = Palette.muted, fontSize = 11.sp)
                 IconButton(onClick = { addOpen = true }) { Icon(Icons.Filled.Add, "Add symbols") }
             }
         }
-        if (st.watchlist.isEmpty()) item {
+        if (st.watchlist.isEmpty()) full {
             Text("Your watchlist is empty. Search above or tap + to add tickers.", color = Palette.muted, modifier = Modifier.padding(16.dp))
         }
         items(st.watchlist, key = { "w-$it" }) { sym ->
@@ -178,7 +181,7 @@ fun MarketsScreen(vm: MainViewModel) {
                 onRemove = { vm.toggleWatch(sym) }, onUp = { vm.moveWatch(sym, true) }, onDown = { vm.moveWatch(sym, false) }, onRetry = { vm.load(sym, true) })
             HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
         }
-        item {
+        full {
             Text(
                 "Probabilities come from a model validated out of sample on 20 years of data. A 60% call is still wrong 40% of the time. Not investment advice.",
                 color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(16.dp),
