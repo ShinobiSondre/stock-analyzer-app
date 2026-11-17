@@ -11,15 +11,17 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
+# Queue instead of cancelling, so the self-restart below is never killed mid-wait.
 concurrency:
   group: quickwins
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -30,8 +32,14 @@ jobs:
       - name: Build scanner
         run: ./gradlew :trainer:installDist --no-daemon -q
       - name: Scan
-        run: trainer/build/install/trainer/bin/trainer --quickscan --out out
+        id: scan
+        run: |
+          d=$(date -u +%u); h=$(date -u +%H)
+          if [ "$d" -le 5 ] && [ "$h" -ge 6 ] && [ "$h" -lt 21 ]; then
+            trainer/build/install/trainer/bin/trainer --quickscan --out out && echo "ran=1" >> $GITHUB_OUTPUT
+          else echo "Markets closed — skipping scan"; fi
       - name: Publish
+        if: steps.scan.outputs.ran == '1'
         run: |
           cd out
           git init -q -b quickwins
@@ -40,3 +48,25 @@ jobs:
           git add quickwins.json
           git commit -qm "Quick wins $(date -u +%FT%TZ)"
           git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" quickwins
+
+      # GitHub's cron is unreliable on this repo (scheduled runs weren't starting), so each run
+      # restarts itself: ~15 min later during market hours (weekdays 06–21 UTC), otherwise it
+      # waits (max 5.5 h per hop) until the next market morning.
+      - name: Keep going
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          now=$(date -u +%s); d=$(date -u +%u); h=$(date -u +%H)
+          if [ "$d" -le 5 ] && [ "$h" -ge 6 ] && [ "$h" -lt 21 ]; then
+            wait=780
+          else
+            # seconds until 06:00 UTC on the next weekday
+            next=$(date -u -d "tomorrow 06:00" +%s); nd=$(date -u -d "tomorrow" +%u)
+            if [ "$d" -le 5 ] && [ "$h" -lt 6 ]; then next=$(date -u -d "today 06:00" +%s); nd=$d; fi
+            while [ "$nd" -gt 5 ]; do next=$((next+86400)); nd=$(date -u -d "@$next" +%u); done
+            wait=$((next-now)); [ $wait -gt 19800 ] && wait=19800
+          fi
+          echo "Next scan in $((wait/60)) min"
+          sleep $wait
+          gh workflow run quickwins.yml --ref main -R "${{ github.repository }}"
