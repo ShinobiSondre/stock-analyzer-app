@@ -78,8 +78,10 @@ fun ScannerScreen(vm: MainViewModel) {
             EmptyState("Nothing scanned yet", "Pick a list and run the scan. Each stock gets the same full analysis as the detail screen, sorted by its probability of being higher in two weeks.")
         }
         items(shown, key = { "scan-" + it.symbol }) { c ->
-            ScanRow(c) { vm.open(c.symbol) }
-            HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth()) {
+                ScanRow(c) { vm.open(c.symbol) }
+                HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+            }
         }
         if (shown.isNotEmpty()) full {
             Text("Bullish calls are rare by design (top ~20% of odds, never closer than 1–4 points to the base rate). Most days most stocks have no edge — HOLD is the honest answer.",

@@ -10,6 +10,7 @@ on:
       - 'docs/**'
       - '**.md'
       - '.github/workflows/train.yml'
+      - '.github/workflows/quickwins.yml'
       - 'trainer/**'
   workflow_dispatch:
 

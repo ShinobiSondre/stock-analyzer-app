@@ -41,6 +41,7 @@ import kotlin.math.sqrt
  */
 fun main(args: Array<String>) {
     val opt = args.toList().windowed(2, 1, true).associate { it[0] to it.getOrNull(1) }
+    if (args.contains("--quickscan")) { QuickScan.run(File(opt["--out"] ?: "out")); return }
     val cache = File(opt["--cache"] ?: "build/wf-cache")
     val out = File(opt["--out"] ?: "build/model-out").apply { mkdirs() }
     val synthetic = args.contains("--synthetic")

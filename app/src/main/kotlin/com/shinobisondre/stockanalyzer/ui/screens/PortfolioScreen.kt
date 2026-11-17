@@ -135,8 +135,10 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
                 is Load.Ok -> {
                     cell { TotalsCard(p.v, Modifier.padding(horizontal = 12.dp, vertical = 8.dp).appear(0)) }
                     items(p.v.rows, key = { "h-" + it.holding.symbol }) { r ->
-                        HoldingRow(r, p.v.base, onOpen = { vm.open(r.holding.symbol) }, onEdit = { editing = r.holding }, onRemove = { vm.removeHolding(r.holding.symbol) })
-                        HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+                        androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth()) {
+                            HoldingRow(r, p.v.base, onOpen = { vm.open(r.holding.symbol) }, onEdit = { editing = r.holding }, onRemove = { vm.removeHolding(r.holding.symbol) })
+                            HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+                        }
                     }
                     if (p.v.totals.sectors.size > 1) cell { SectorsCard(p.v, Modifier.padding(12.dp)) }
                 }

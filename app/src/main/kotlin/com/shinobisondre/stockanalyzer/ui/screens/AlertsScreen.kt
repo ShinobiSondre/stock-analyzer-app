@@ -86,8 +86,10 @@ fun AlertsScreen(vm: MainViewModel) {
                     EmptyState("No alerts yet", "The watcher checks your portfolio and watchlist in the background: call changes (judged on completed daily bars, so no intraday flip-flopping), big moves, Tyler 3/4-stacks, new measured setups and market regime changes.")
                 }
                 items(st.alerts, key = { it.id }) { a ->
-                    AlertRow(a) { if (a.symbol != "MARKET") vm.open(a.symbol) }
-                    HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+                    androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth()) {
+                        AlertRow(a) { if (a.symbol != "MARKET") vm.open(a.symbol) }
+                        HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+                    }
                 }
             }
             "Track record" -> full {

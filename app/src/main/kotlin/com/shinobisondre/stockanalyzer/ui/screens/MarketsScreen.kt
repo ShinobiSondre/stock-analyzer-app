@@ -177,9 +177,11 @@ fun MarketsScreen(vm: MainViewModel) {
             Text("Your watchlist is empty. Search above or tap + to add tickers.", color = Palette.muted, modifier = Modifier.padding(16.dp))
         }
         items(st.watchlist, key = { "w-$it" }) { sym ->
-            WatchRow(sym, cores[sym], onClick = { vm.open(sym) },
-                onRemove = { vm.toggleWatch(sym) }, onUp = { vm.moveWatch(sym, true) }, onDown = { vm.moveWatch(sym, false) }, onRetry = { vm.load(sym, true) })
-            HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth()) {
+                WatchRow(sym, cores[sym], onClick = { vm.open(sym) },
+                    onRemove = { vm.toggleWatch(sym) }, onUp = { vm.moveWatch(sym, true) }, onDown = { vm.moveWatch(sym, false) }, onRetry = { vm.load(sym, true) })
+                HorizontalDivider(Modifier.padding(start = 16.dp), color = Palette.outline.copy(alpha = 0.5f))
+            }
         }
         full {
             Text(

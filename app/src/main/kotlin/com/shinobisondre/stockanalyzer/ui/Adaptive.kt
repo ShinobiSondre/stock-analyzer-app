@@ -1,6 +1,8 @@
 package com.shinobisondre.stockanalyzer.ui
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridItemScope
 import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridScope
@@ -31,8 +33,9 @@ fun AdaptiveGrid(
     )
 }
 
+// Item content is wrapped in a Column so several children stack instead of drawing on top of each other.
 fun LazyStaggeredGridScope.full(key: Any? = null, content: @Composable LazyStaggeredGridItemScope.() -> Unit) =
-    item(key = key, span = StaggeredGridItemSpan.FullLine, content = content)
+    item(key = key, span = StaggeredGridItemSpan.FullLine) { val scope = this; Column(Modifier.fillMaxWidth()) { scope.content() } }
 
 fun LazyStaggeredGridScope.cell(key: Any? = null, content: @Composable LazyStaggeredGridItemScope.() -> Unit) =
-    item(key = key, content = content)
+    item(key = key) { val scope = this; Column(Modifier.fillMaxWidth()) { scope.content() } }

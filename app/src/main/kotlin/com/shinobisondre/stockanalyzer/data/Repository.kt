@@ -386,12 +386,42 @@ class Repository(private val context: Context, val store: Store) {
             advice, owned, watched, open, mins, closeLocal, cost, emptyList(), null)
     }
 
+    /**
+     * Today's movers from the server scan (GitHub Actions, every 15 min in market hours) — one small
+     * download instead of 150+ charts. Null when the file is missing or older than [maxAgeMin].
+     */
+    suspend fun serverQuickWins(maxAgeMin: Long = 40): List<QuickWin>? = runCatching {
+        val body = Http.get("https://raw.githubusercontent.com/${com.shinobisondre.stockanalyzer.BuildConfig.UPDATE_REPO}/quickwins/quickwins.json?t=${System.currentTimeMillis() / 300_000}")
+        val doc = MiniJson.parse(body).obj()
+        val epoch = doc["epoch"].num()?.toLong() ?: return@runCatching null
+        if (System.currentTimeMillis() / 1000 - epoch > maxAgeMin * 60) return@runCatching null
+        val st = store.value
+        val owned = st.holdings.map { it.symbol }.toSet(); val watched = st.watchlist.toSet()
+        val now = System.currentTimeMillis() / 1000
+        doc["items"].list().mapNotNull { e ->
+            val m = e.obj()
+            val sym = m["symbol"].str() ?: return@mapNotNull null
+            val chg = m["changePct"].num() ?: return@mapNotNull null
+            val rvol = m["rvol"].num(); val clv = m["clv"].num(); val above = m["above200"] as? Boolean
+            val open = m["sessionOpen"] == true
+            val end = m["close"].num()?.toLong()
+            val cost = costPct(sym, st.settings.baseCurrency)
+            val advice = dayAfter?.let { DayAfter.advise(it.table(sym), chg, rvol, clv, above, cost) }
+            val closeLocal = end?.let { java.time.Instant.ofEpochSecond(it).atZone(java.time.ZoneId.systemDefault()).toLocalTime().toString().take(5) }
+            QuickWin(sym, m["name"].str() ?: sym, chg, m["price"].num(), m["currency"].str() ?: "USD", rvol, clv, above, null, advice,
+                sym in owned, sym in watched, open && end != null && now < end, end?.let { (it - now) / 60 }?.takeIf { open && it > 0 }, closeLocal, cost, emptyList(), null)
+        }
+    }.getOrNull()
+
     suspend fun quickWins(market: List<String>, minMove: Double, onProgress: (Int, Int) -> Unit): List<QuickWin> = coroutineScope {
         val st = store.value
         val owned = st.holdings.map { it.symbol }.toSet()
         val watched = st.watchlist.toSet()
+        // The server already scanned the market: only its movers need a closer look here.
+        val server = if (market.isNotEmpty()) serverQuickWins() else null
+        val candidates = server?.map { it.symbol } ?: market
         val gainers = runCatching { Yahoo.dayGainers() }.getOrDefault(emptyList())
-        val all = (owned + watched + gainers + market).distinct()
+        val all = (owned + watched + gainers + candidates).distinct()
         var done = 0
         val lock = Mutex()
         // Pass 1: daily charts only (cheap) to find what is actually up.

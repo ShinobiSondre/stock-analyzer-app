@@ -182,12 +182,32 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             Notifier.post(applicationContext, Notifier.CH_ALERTS, (al.id.hashCode() and 0x7fffffff) + i, al.title, al.message, al.symbol.takeIf { it != "MARKET" })
         }
 
+        // Quick wins from the server scan: one small download, matched with your stocks on the phone.
+        if (settings.notifyQuickWins) runCatching { quickWinCheck(repo) }
+
         // New Tyler Hill video → summarise it and say what he expects (checked every ~3 hours).
         if (settings.notifyTyler) runCatching { tylerCheck(repo) }
 
         // Daily update check.
         if (settings.autoUpdateCheck) runCatching { Updater.backgroundCheck(applicationContext) }
         return Result.success()
+    }
+
+    private suspend fun quickWinCheck(repo: com.shinobisondre.stockanalyzer.data.Repository) {
+        val items = repo.serverQuickWins() ?: return
+        val prefs = applicationContext.getSharedPreferences("quickwins", Context.MODE_PRIVATE)
+        val day = java.time.LocalDate.now().toString()
+        val seen = prefs.getString("seen", "")!!.split(',').filter { it.startsWith("$day:") }.map { it.substringAfter(':') }.toSet()
+        fun call(w: com.shinobisondre.stockanalyzer.data.QuickWin) =
+            com.shinobisondre.stockanalyzer.engine.DayAfter.plain(w.advice, w.owned, w.costPct, if (w.sessionOpen) w.closeLocal else null)
+        // Yours and your watchlist always; other stocks only when they're worth buying.
+        val fresh = items.filter { it.symbol !in seen && (it.owned || it.watched || call(it).tone == com.shinobisondre.stockanalyzer.engine.Tone.BUY) }
+            .sortedWith(compareByDescending<com.shinobisondre.stockanalyzer.data.QuickWin> { it.owned }.thenByDescending { it.changePct }).take(4)
+        if (fresh.isEmpty()) return
+        prefs.edit().putString("seen", (seen + fresh.map { it.symbol }).joinToString(",") { "$day:$it" }).apply()
+        val title = "⚡ " + fresh.joinToString(", ") { "${it.symbol.removeSuffix(".OL")} +${"%.1f".format(it.changePct)}%" }
+        val body = fresh.joinToString("\n") { w -> "${w.symbol.removeSuffix(".OL")}: ${call(w).action}" }
+        Notifier.post(applicationContext, Notifier.CH_ALERTS, 9200, title, body, tab = "QUICK")
     }
 
     private suspend fun tylerCheck(repo: com.shinobisondre.stockanalyzer.data.Repository) {
