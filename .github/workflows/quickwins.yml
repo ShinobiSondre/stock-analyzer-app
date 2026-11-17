@@ -5,7 +5,8 @@ name: Quick wins scan
 # (instead of scanning 150+ charts on the phone) to alert you about quick wins.
 on:
   schedule:
-    - cron: '*/15 7-21 * * 1-5'
+    # Off the busy :00/:15 marks — GitHub drops many scheduled runs there.
+    - cron: '7,22,37,52 6-21 * * 1-5'
   workflow_dispatch:
 
 permissions:

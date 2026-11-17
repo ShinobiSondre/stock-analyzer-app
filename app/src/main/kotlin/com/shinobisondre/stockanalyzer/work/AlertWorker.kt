@@ -120,7 +120,9 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         }
 
         // ── Symbols ──
-        val symbols = (st.holdings.map { it.symbol } + st.watchlist).distinct().take(40)
+        // Also keep watching stocks with an open "sell now" signal, so the "buy back" can come even after you sold.
+        val symbols = (st.holdings.map { it.symbol } + st.watchlist + st.watch.filterValues { it.sellSignalPrice != null }.keys).distinct().take(45)
+        val owned = st.holdings.map { it.symbol }.toSet()
         for (sym in symbols) {
             val core = runCatching { repo.analyze(sym, force = true) }.getOrNull() ?: continue
             val completed = core.chart.completedCandles()
@@ -152,6 +154,21 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
                         newAlerts += alert(sym, "setup", "$sym: ${s.title}", "${s.detail} ${s.evidence}")
                 }
                 next = next.copy(group = group, call = call.text, barDate = a.lastDate, sellHits = t.sellHits, buyHits = t.buyHits, setups = setupKeys)
+
+                // Sell now → (later) buy back, for stocks you own.
+                if (settings.notifySwing) {
+                    val soldAt = prev.sellSignalPrice
+                    val age = prev.sellSignalDate?.let { runCatching { java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(it), java.time.LocalDate.now()) }.getOrNull() }
+                    if (soldAt == null || (age != null && age > 90)) {
+                        if (sym in owned) com.shinobisondre.stockanalyzer.engine.Swing.sellNow(a)?.let { why ->
+                            newAlerts += alert(sym, "swing", "Sell $sym now?", "$why We'll tell you when it looks good to buy back. (The app's best read, not a guarantee.)")
+                            next = next.copy(sellSignalPrice = a.lastClose, sellSignalDate = a.lastDate)
+                        } ?: run { if (soldAt != null) next = next.copy(sellSignalPrice = null, sellSignalDate = null) }
+                    } else com.shinobisondre.stockanalyzer.engine.Swing.buyBack(a, soldAt)?.let { why ->
+                        newAlerts += alert(sym, "swing", "Buy $sym back?", why)
+                        next = next.copy(sellSignalPrice = null, sellSignalDate = null)
+                    }
+                }
             }
 
             // Big intraday move (once per day).
@@ -182,6 +199,9 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             Notifier.post(applicationContext, Notifier.CH_ALERTS, (al.id.hashCode() and 0x7fffffff) + i, al.title, al.message, al.symbol.takeIf { it != "MARKET" })
         }
 
+        // Breaking news on the stocks you own: new headlines that sound clearly good or bad.
+        if (settings.notifyNews) runCatching { newsCheck(st.holdings.map { it.symbol }) }
+
         // Quick wins from the server scan: one small download, matched with your stocks on the phone.
         if (settings.notifyQuickWins) runCatching { quickWinCheck(repo) }
 
@@ -191,6 +211,24 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         // Daily update check.
         if (settings.autoUpdateCheck) runCatching { Updater.backgroundCheck(applicationContext) }
         return Result.success()
+    }
+
+    private suspend fun newsCheck(symbols: List<String>) {
+        val prefs = applicationContext.getSharedPreferences("news", Context.MODE_PRIVATE)
+        val seen = prefs.getStringSet("seen", emptySet())!!.toMutableSet()
+        val now = System.currentTimeMillis() / 1000
+        var id = 9300
+        for (sym in symbols.take(15)) {
+            val items = runCatching { com.shinobisondre.stockanalyzer.data.Yahoo.search(sym, news = 6, quotes = 0).second }.getOrDefault(emptyList())
+            val fresh = items.filter { (it.timeSec ?: 0) > now - 3 * 3600 && it.link !in seen }
+                .map { it to com.shinobisondre.stockanalyzer.data.News.sentiment(it.title) }.filter { it.second != 0 }
+            fresh.firstOrNull()?.let { (n, s) ->
+                Notifier.post(applicationContext, Notifier.CH_ALERTS, id++, "News on ${sym.removeSuffix(".OL")}: sounds ${if (s > 0) "good" else "bad"}",
+                    "“${n.title}” (${n.publisher}). Prices often react within minutes — open the app to see how it's moving.", sym)
+            }
+            fresh.forEach { seen += it.first.link }
+        }
+        prefs.edit().putStringSet("seen", seen.toList().takeLast(400).toSet()).apply()
     }
 
     private suspend fun quickWinCheck(repo: com.shinobisondre.stockanalyzer.data.Repository) {

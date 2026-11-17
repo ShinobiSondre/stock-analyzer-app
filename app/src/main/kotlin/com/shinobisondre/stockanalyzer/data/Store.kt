@@ -37,6 +37,8 @@ data class Settings(
     val autoUpdateCheck: Boolean = true,
     val notifyTyler: Boolean = true,
     val notifyQuickWins: Boolean = true,
+    val notifySwing: Boolean = true,
+    val notifyNews: Boolean = true,
 )
 
 data class AlertItem(val id: String, val symbol: String, val type: String, val title: String, val message: String, val time: Long, val read: Boolean = false)
@@ -50,6 +52,9 @@ data class WatchState(
     val buyHits: Int = 0,
     val setups: String = "",
     val moveAlertDate: String? = null,
+    /** "Sell now" signal waiting for a "buy back" (price and date when it came). */
+    val sellSignalPrice: Double? = null,
+    val sellSignalDate: String? = null,
 )
 
 data class AppState(
@@ -112,7 +117,7 @@ class Store(context: Context) {
             "settings" to s.settings.let {
                 linkedMapOf("baseCurrency" to it.baseCurrency, "alertsEnabled" to it.alertsEnabled, "alertIntervalMin" to it.alertIntervalMin,
                     "bigMovePct" to it.bigMovePct, "notifyCalls" to it.notifyCalls, "notifyMoves" to it.notifyMoves, "notifyStacks" to it.notifyStacks,
-                    "notifyMarket" to it.notifyMarket, "autoUpdateCheck" to it.autoUpdateCheck, "notifyTyler" to it.notifyTyler, "notifyQuickWins" to it.notifyQuickWins)
+                    "notifyMarket" to it.notifyMarket, "autoUpdateCheck" to it.autoUpdateCheck, "notifyTyler" to it.notifyTyler, "notifyQuickWins" to it.notifyQuickWins, "notifySwing" to it.notifySwing, "notifyNews" to it.notifyNews)
             },
             "calls" to s.calls.takeLast(MAX_CALLS).map {
                 linkedMapOf("s" to it.symbol, "d" to it.date, "c" to it.close, "k" to it.call, "p5" to it.p5, "p10" to it.p10, "p22" to it.p22, "b" to it.base10, "m" to it.modelVersion)
@@ -121,7 +126,8 @@ class Store(context: Context) {
                 linkedMapOf("id" to it.id, "symbol" to it.symbol, "type" to it.type, "title" to it.title, "message" to it.message, "time" to it.time, "read" to it.read)
             },
             "watch" to s.watch.mapValues { (_, w) ->
-                linkedMapOf("group" to w.group, "call" to w.call, "barDate" to w.barDate, "sellHits" to w.sellHits, "buyHits" to w.buyHits, "setups" to w.setups, "moveAlertDate" to w.moveAlertDate)
+                linkedMapOf("group" to w.group, "call" to w.call, "barDate" to w.barDate, "sellHits" to w.sellHits, "buyHits" to w.buyHits, "setups" to w.setups, "moveAlertDate" to w.moveAlertDate,
+                    "sellSignalPrice" to w.sellSignalPrice, "sellSignalDate" to w.sellSignalDate)
             },
             "lastRegime" to s.lastRegime,
             "lastIndexDeathCross" to s.lastIndexDeathCross,
@@ -146,7 +152,7 @@ class Store(context: Context) {
                     bigMovePct = st["bigMovePct"].num() ?: d.settings.bigMovePct,
                     notifyCalls = b(st, "notifyCalls", true), notifyMoves = b(st, "notifyMoves", true),
                     notifyStacks = b(st, "notifyStacks", true), notifyMarket = b(st, "notifyMarket", true),
-                    autoUpdateCheck = b(st, "autoUpdateCheck", true), notifyTyler = b(st, "notifyTyler", true), notifyQuickWins = b(st, "notifyQuickWins", true),
+                    autoUpdateCheck = b(st, "autoUpdateCheck", true), notifyTyler = b(st, "notifyTyler", true), notifyQuickWins = b(st, "notifyQuickWins", true), notifySwing = b(st, "notifySwing", true), notifyNews = b(st, "notifyNews", true),
                 ),
                 calls = m["calls"].list().map { it.obj() }.mapNotNull { c ->
                     LoggedCall(c["s"].str() ?: return@mapNotNull null, c["d"].str() ?: return@mapNotNull null, c["c"].num() ?: 0.0,
@@ -159,7 +165,7 @@ class Store(context: Context) {
                 watch = m["watch"].obj().mapValues { (_, v) ->
                     val w = v.obj()
                     WatchState(w["group"].str(), w["call"].str(), w["barDate"].str(), w["sellHits"].num()?.toInt() ?: 0,
-                        w["buyHits"].num()?.toInt() ?: 0, w["setups"].str() ?: "", w["moveAlertDate"].str())
+                        w["buyHits"].num()?.toInt() ?: 0, w["setups"].str() ?: "", w["moveAlertDate"].str(), w["sellSignalPrice"].num(), w["sellSignalDate"].str())
                 },
                 lastRegime = m["lastRegime"].str(),
                 lastIndexDeathCross = m["lastIndexDeathCross"] as? Boolean,

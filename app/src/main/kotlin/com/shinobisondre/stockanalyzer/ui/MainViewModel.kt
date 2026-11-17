@@ -38,10 +38,18 @@ sealed interface Load<out T> {
 fun <T> Load<T>.value(): T? = (this as? Load.Ok<T>)?.v
 
 enum class Tab(val label: String, val inBottomBar: Boolean = true) {
-    MARKETS("Home"), QUICK("Quick wins"), RIPPLE("Ripples"), PORTFOLIO("Portfolio"), TYLER("Tyler"),
+    MARKETS("Home"), PICKS("Picks"), QUICK("Quick wins"), PORTFOLIO("Portfolio"), TYLER("Tyler"),
     // Reached from the home page on the narrow screen; in the side rail when unfolded.
-    SCANNER("Scanner", false), ALERTS("Alerts", false), SETTINGS("Settings", false),
+    RIPPLE("Ripples", false), SCANNER("Scanner", false), ALERTS("Alerts", false), SETTINGS("Settings", false),
 }
+
+data class PicksState(
+    val running: Boolean = false,
+    val done: Int = 0,
+    val total: Int = 0,
+    val items: List<com.shinobisondre.stockanalyzer.data.Repository.PickView> = emptyList(),
+    val at: Long = 0,
+)
 
 data class TylerState(
     val videos: List<com.shinobisondre.stockanalyzer.engine.YtVideo> = emptyList(),
@@ -143,6 +151,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var shotJob: Job? = null
     val tyler = MutableStateFlow(TylerState())
     private var tylerJob: Job? = null
+    val picks = MutableStateFlow(PicksState())
+    private var picksJob: Job? = null
     /** Imported Nordnet trades (null until imported). */
     val trades = MutableStateFlow<com.shinobisondre.stockanalyzer.data.TradeBook?>(null)
     /** Ripple tree: the stock in the middle and its loaded tree. */
@@ -353,6 +363,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ok.forEach { c -> cores.update { m -> m + (c.symbol to Load.Ok(c)) } }
             val failed = syms.filterIndexed { i, _ -> res[i].isFailure }
             scan.update { it.copy(running = false, results = ok.sortedByDescending { c -> c.p10 ?: c.analysis.rules.rawScore / 10 }, failed = failed, at = System.currentTimeMillis()) }
+        }
+    }
+
+    // ── Picks ────────────────────────────────────────────────────────────────
+    /** Your stocks, your watchlist and ~45 well-known names, scored the original web app's way plus odds, Tyler and news. */
+    fun loadPicks(force: Boolean = false) {
+        val p = picks.value
+        if (p.running || (!force && p.at > 0 && System.currentTimeMillis() - p.at < 60 * 60_000)) return
+        picksJob?.cancel()
+        val st = state.value
+        val syms = (st.holdings.map { it.symbol } + st.watchlist + Universes.CORE + Universes.US_LARGE.take(25))
+            .distinct().filter { it != "SPY" && it != "QQQ" }
+        picks.update { it.copy(running = true, done = 0, total = syms.size) }
+        picksJob = viewModelScope.launch {
+            val items = runCatching { repo.picks(syms) { d, t -> picks.update { s -> s.copy(done = d, total = t) } } }.getOrDefault(emptyList())
+            picks.update { it.copy(running = false, items = items, at = System.currentTimeMillis()) }
         }
     }
 

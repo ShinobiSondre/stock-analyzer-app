@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -90,6 +91,7 @@ private fun Tab.icon(): ImageVector = when (this) {
     Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.BoltIcon
     Tab.TYLER -> Icons.Filled.PlayArrow
     Tab.RIPPLE -> Icons.Filled.Share
+    Tab.PICKS -> Icons.Filled.Star
     Tab.SCANNER -> Icons.Filled.Search
     Tab.PORTFOLIO -> Icons.Filled.AccountBox
     Tab.ALERTS -> Icons.Filled.Notifications
@@ -269,6 +271,7 @@ fun TabContent(vm: MainViewModel, tab: Tab, twoPane: Boolean) {
         Tab.MARKETS -> MarketsScreen(vm)
         Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.QuickWinsScreen(vm)
         Tab.RIPPLE -> com.shinobisondre.stockanalyzer.ui.screens.RippleScreen(vm)
+        Tab.PICKS -> com.shinobisondre.stockanalyzer.ui.screens.PicksScreen(vm)
         Tab.TYLER -> com.shinobisondre.stockanalyzer.ui.screens.TylerScreen(vm)
         Tab.SCANNER -> ScannerScreen(vm)
         Tab.PORTFOLIO -> PortfolioScreen(vm, twoPane)

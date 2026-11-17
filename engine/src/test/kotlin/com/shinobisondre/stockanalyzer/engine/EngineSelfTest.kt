@@ -36,6 +36,7 @@ object EngineSelfTest {
         tyler()
         ripple()
         nordnetNotes()
+        picks()
         println("EngineSelfTest: $passed checks passed, ${failures.size} failed")
         failures.forEach { println("  FAIL $it") }
         return failures.toList()
@@ -468,6 +469,25 @@ object EngineSelfTest {
         near("phone cost", NordnetNotes.cashNok(pt[0]), 20 * 135.0 * 11 + 99, 1e-6)
         near("phone ledger", NordnetNotes.ledger(pt).first { it.code == "NVDA" }.avgCostNok, 41848.0 / 30, 1e-6)
     }
+    private fun picks() {
+        val a = Analyzer.analyze("TEST", synthetic(520), market(600), dummyModel())!!
+        val strong = Fundamentals(price = a.lastClose, targetMeanPrice = a.lastClose * 1.3, recommendationMean = 1.7, profitMargins = 0.3,
+            earningsGrowth = 0.25, revenueGrowth = 0.2, trailingPE = 15.0, marketCap = 5e11, avgVolume = 5e6, freeCashflow = 1e9)
+        val news = listOf(NewsHeadline("TEST beats estimates, raises guidance", 1, 0.5), NewsHeadline("Upgrade at big bank", 1, 20.0))
+        val p = Picks.evaluate("TEST", "Test Co", strong, a, news, PickExtras(daysToEarnings = 3, upgrades30d = 3))
+        check("pick reasons plain", p.reasons.any { it.text.startsWith("Most professional analysts") || it.text.startsWith("Almost all") } &&
+            p.reasons.any { it.text.contains("30%") } && p.reasons.any { it.text.contains("reports results in 3 days") }) { p.reasons.joinToString("\n") { it.text } }
+        check("pick breaking", p.breaking?.title?.startsWith("TEST beats") == true && p.reasons.any { it.text.startsWith("Fresh news") })
+        check("pick not avoid", p.tier != PickTier.AVOID) { "${p.tier} ${p.score}" }
+        val weak = Fundamentals(price = a.lastClose, recommendationMean = 3.8, profitMargins = -0.2, freeCashflow = -1e8, marketCap = 5e8, avgVolume = 1e5)
+        val w = Picks.evaluate("TEST", "Test Co", weak, a, emptyList())
+        check("pick avoid", w.tier == PickTier.AVOID && w.reasons.first().good == false) { "${w.tier} ${w.reasons}" }
+        check("pick no fundamentals", Picks.evaluate("TEST", "T", null, a, emptyList()).reasons.any { it.text.startsWith("Company facts") })
+        // Swing: no buy-back while it's still a falling knife or bearish; a 10% drop with nothing bad is a buy-back.
+        val bb = Swing.buyBack(a, a.lastClose * 1.2)
+        check("swing buyback", a.verdict.call.bearish || bb != null) { "${a.verdict.call}" }
+    }
+
     private fun nok(s: String) = s.replace(" ", "").replace(',', '.').toDouble()
 
     @JvmStatic

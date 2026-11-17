@@ -30,6 +30,10 @@ import com.shinobisondre.stockanalyzer.engine.TrackRecord
 import com.shinobisondre.stockanalyzer.engine.TrackSummary
 import com.shinobisondre.stockanalyzer.engine.LedgerPosition
 import com.shinobisondre.stockanalyzer.engine.Link
+import com.shinobisondre.stockanalyzer.engine.NewsHeadline
+import com.shinobisondre.stockanalyzer.engine.Pick
+import com.shinobisondre.stockanalyzer.engine.PickExtras
+import com.shinobisondre.stockanalyzer.engine.Picks
 import com.shinobisondre.stockanalyzer.engine.NordnetNotes
 import com.shinobisondre.stockanalyzer.engine.Trade
 import com.shinobisondre.stockanalyzer.engine.Ripple
@@ -489,6 +493,30 @@ class Repository(private val context: Context, val store: Store) {
         val detailed = top.map { q -> async { quickWin(q.symbol, q.owned, q.watched, intraday = true) ?: q } }.map { it.await() }.associateBy { it.symbol }
         firstPass.map { detailed[it.symbol] ?: it }
             .sortedWith(compareByDescending<QuickWin> { it.owned }.thenByDescending { it.watched }.thenByDescending { it.changePct })
+    }
+
+    // ── Picks ────────────────────────────────────────────────────────────────
+    class PickView(val pick: Pick, val price: Double?, val currency: String, val changePct: Double?, val owned: Boolean)
+
+    /** Full read for one stock: chart + model, company facts, analysts, earnings date and the latest headlines. */
+    suspend fun pickFor(symbol: String): PickView? = coroutineScope {
+        val core = runCatching { analyze(symbol) }.getOrNull() ?: return@coroutineScope null
+        val sum = async { runCatching { net.withPermit { Yahoo.summary(symbol) } }.getOrNull() }
+        val news = async { runCatching { net.withPermit { Yahoo.search(symbol, news = 8, quotes = 0).second } }.getOrDefault(emptyList()) }
+        val s = sum.await()
+        val now = System.currentTimeMillis() / 1000
+        val heads = news.await().map { NewsHeadline(it.title, News.sentiment(it.title).coerceIn(-1, 1), Picks.ageHours(it.timeSec, now)) }
+        val cat = s?.catalysts
+        val p = Picks.evaluate(symbol, core.name, s?.fundamentals, core.analysis, heads,
+            PickExtras(cat?.daysToEarnings, cat?.upgrades30d ?: 0, cat?.downgrades30d ?: 0))
+        PickView(p, core.price, core.currency, core.changePct, store.value.holdings.any { it.symbol == symbol })
+    }
+
+    suspend fun picks(symbols: List<String>, onProgress: (Int, Int) -> Unit): List<PickView> = coroutineScope {
+        var done = 0
+        val lock = Mutex()
+        symbols.map { s -> async { val r = runCatching { pickFor(s) }.getOrNull(); lock.withLock { done++; onProgress(done, symbols.size) }; r } }
+            .mapNotNull { it.await() }.sortedByDescending { it.pick.score }
     }
 
     // ── Ripple tree ──────────────────────────────────────────────────────────
