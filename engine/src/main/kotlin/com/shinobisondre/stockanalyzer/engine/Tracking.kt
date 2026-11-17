@@ -129,10 +129,10 @@ object Portfolio {
         if (p.price == null || fx == null) return PositionValue(p, null, null, null, null, null)
         val value = p.shares * p.price * mult * fx
         // Real cost from trades (historical FX and fees) when known; otherwise the average price at today's rate.
-        val cost = p.costPerShareBase?.let { p.shares * it } ?: p.avgCost?.let { p.shares * it * mult * fx }
+        val cost = p.costPerShareBase?.takeIf { it > 0 }?.let { p.shares * it } ?: p.avgCost?.takeIf { it > 0 }?.let { p.shares * it * mult * fx }
         val pnl = cost?.let { value - it }
         val pnlPct = when {
-            cost != null && cost > 0 && p.costPerShareBase != null -> (value / cost - 1) * 100
+            cost != null && cost > 0 && p.costPerShareBase != null && p.costPerShareBase > 0 -> (value / cost - 1) * 100
             p.avgCost != null && p.avgCost > 0 -> (p.price - p.avgCost) / p.avgCost * 100
             else -> null
         }

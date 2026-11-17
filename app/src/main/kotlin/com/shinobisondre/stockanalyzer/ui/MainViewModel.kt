@@ -168,7 +168,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Holdings too, so the Markets banner can flag a big mover you own.
         state.value.holdings.forEach { load(it.symbol, permits = true) }
         loadTylerCache()
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { trades.value = repo.tradeBook() }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val book = repo.tradeBook()
+            trades.value = book
+            // Re-work costs from the saved trades with the current rules (v1.0.15 read some totals wrong on the phone).
+            if (book != null) {
+                val byIsin = book.ledger.filter { it.open }.associateBy { it.isin }
+                val st = repo.store.value
+                if (st.holdings.any { h -> h.isin != null && byIsin[h.isin]?.avgCostNok?.let { kotlin.math.abs(it - (h.costNok ?: 0.0)) > 0.01 } == true }) {
+                    repo.store.update { s0 -> s0.copy(holdings = s0.holdings.map { h ->
+                        val p = h.isin?.let { byIsin[it] } ?: return@map h
+                        h.copy(costNok = p.avgCostNok, avgCost = p.avgCost ?: h.avgCost)
+                    }) }
+                    loadPortfolio(true)
+                }
+            }
+        }
         autoUpdate()
     }
 

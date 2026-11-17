@@ -61,7 +61,15 @@ object NordnetNotes {
     /** "9 907,14" / "20,2600" → number. */
     fun nok(s: String): Double? = s.replace(" ", "").replace(" ", "").replace(',', '.').toDoubleOrNull()
 
-    fun parse(text: String): List<Trade> {
+    /**
+     * PDF text from phones differs from desktop tools: letters like Å/ø can come out decomposed
+     * and thousands separators as no-break or thin spaces. Normalise both before parsing.
+     */
+    fun normalise(raw: String): String = java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFC)
+        .replace(Regex("[\u00A0\u2007\u2009\u202F]"), " ")
+
+    fun parse(raw: String): List<Trade> {
+        val text = normalise(raw)
         val notes = text.split(Regex("SLUTTSEDDEL")).drop(1)
         val out = mutableListOf<Trade>()
         val prevNos = Regex("""Nr\s+(\d{6,})""").findAll(text).map { it.range.first to it.groupValues[1] }.toList()
@@ -95,9 +103,25 @@ object NordnetNotes {
         val fx = Regex("""Valutakurs\s+[A-Z]{3}/NOK\s+($NUM)""").find(n)?.let { nok(it.groupValues[1]) }
         fun amount(label: String) = Regex("""$label\s*\(NOK\)\s+(-?(?:$NUM))""").find(n)?.let { nok(it.groupValues[1]) }
         val fee = (amount("Kurtasje") ?: 0.0) + (amount("Avgift") ?: 0.0)
-        val total = amount("Å betale") ?: amount("Til gode")
+        val total = amount("(?:Å|A\\W?)\\s*betale") ?: amount("Til gode")
         return Trade(noteNo, date, first.groupValues[5].let { if (it == "00:00:00") "" else it }, buy, code, isin, name, qty, cost / qty,
-            first.groupValues[3], first.groupValues[4].trim(), fx, amount("Beløp"), fee, total)
+            first.groupValues[3], first.groupValues[4].trim(), fx, amount("Bel\\Wp"), fee, total)
+    }
+
+    /**
+     * What a trade cost (buy) or brought in (sell) in NOK. Worked out from shares × price ×
+     * exchange rate ± fees, which never depends on how the PDF text came out; the note's own
+     * total is used only when it agrees (it includes rounding the broker did).
+     */
+    fun cashNok(t: Trade): Double? {
+        val rate = t.fx ?: if (t.currency == "NOK") 1.0 else null
+        val calc = rate?.let { t.quantity * t.price * it + if (t.buy) t.feeNok else -t.feeNok }
+        val stated = t.totalNok ?: t.amountNok?.let { if (t.buy) it + t.feeNok else it - t.feeNok }
+        return when {
+            calc == null -> stated
+            stated != null && calc > 0 && kotlin.math.abs(stated / calc - 1) < 0.02 -> stated
+            else -> calc
+        }
     }
 
     /** Running average cost per security, like Nordnet's GAV: buys raise the average, sells keep it and book a gain/loss. */
@@ -109,12 +133,12 @@ object NordnetNotes {
                 if (qty <= 1e-9) firstBuy = t.date
                 qty += t.quantity
                 costCcy += t.quantity * t.price
-                costNok += t.totalNok ?: ((t.amountNok ?: 0.0) + t.feeNok)
+                costNok += cashNok(t) ?: 0.0
             } else {
                 val q = minOf(t.quantity, qty)
                 if (qty > 1e-9 && q > 0) {
                     val avgNok = costNok / qty
-                    realized += (t.totalNok ?: ((t.amountNok ?: 0.0) - t.feeNok)) * (q / t.quantity) - avgNok * q
+                    realized += (cashNok(t) ?: 0.0) * (q / t.quantity) - avgNok * q
                     costCcy -= costCcy / qty * q
                     costNok -= avgNok * q
                     qty -= q

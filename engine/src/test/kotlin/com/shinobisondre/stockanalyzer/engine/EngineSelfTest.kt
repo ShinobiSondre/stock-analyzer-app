@@ -460,6 +460,13 @@ object EngineSelfTest {
         check("ledger since", nv.firstBuy == "2024-12-12")
         check("ticker map", NordnetNotes.yahooTicker(nv) == "NVDA" && NordnetNotes.yahooTicker(l.first { it.code.startsWith("DNB") }) == null)
         check("nok parse", NordnetNotes.nok("9 907,14") == 9907.14)
+        // Phone PDF text: "Å" decomposed (A + ring), thousands separators as no-break spaces, and a
+        // garbled total — the cost must still come out right from shares × price × rate + fee.
+        val phone = text.replace("Å betale", "A\u030A betale").replace("29 700,00", "29\u00A0700,00").replace("29 799,00", "799,00")
+        val pt = NordnetNotes.parse(phone)
+        check("phone text", pt.size == 4 && pt[0].amountNok == 29700.0) { pt.firstOrNull().toString() }
+        near("phone cost", NordnetNotes.cashNok(pt[0]), 20 * 135.0 * 11 + 99, 1e-6)
+        near("phone ledger", NordnetNotes.ledger(pt).first { it.code == "NVDA" }.avgCostNok, 41848.0 / 30, 1e-6)
     }
     private fun nok(s: String) = s.replace(" ", "").replace(',', '.').toDouble()
 
