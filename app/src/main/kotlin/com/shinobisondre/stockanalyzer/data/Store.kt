@@ -19,7 +19,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 
-data class Holding(val symbol: String, val shares: Double, val avgCost: Double?, val addedAt: Long = System.currentTimeMillis())
+data class Holding(
+    val symbol: String, val shares: Double, val avgCost: Double?, val addedAt: Long = System.currentTimeMillis(),
+    /** From imported Nordnet trades: cost per share in NOK incl. fees and the day's exchange rate, and the first buy date. */
+    val costNok: Double? = null, val since: String? = null, val isin: String? = null,
+)
 
 data class Settings(
     val baseCurrency: String = "NOK",
@@ -103,7 +107,8 @@ class Store(context: Context) {
         fun toMap(s: AppState): Map<String, Any?> = linkedMapOf(
             "v" to 1,
             "watchlist" to s.watchlist,
-            "holdings" to s.holdings.map { linkedMapOf("symbol" to it.symbol, "shares" to it.shares, "avgCost" to it.avgCost, "addedAt" to it.addedAt) },
+            "holdings" to s.holdings.map { linkedMapOf("symbol" to it.symbol, "shares" to it.shares, "avgCost" to it.avgCost, "addedAt" to it.addedAt,
+                "costNok" to it.costNok, "since" to it.since, "isin" to it.isin) },
             "settings" to s.settings.let {
                 linkedMapOf("baseCurrency" to it.baseCurrency, "alertsEnabled" to it.alertsEnabled, "alertIntervalMin" to it.alertIntervalMin,
                     "bigMovePct" to it.bigMovePct, "notifyCalls" to it.notifyCalls, "notifyMoves" to it.notifyMoves, "notifyStacks" to it.notifyStacks,
@@ -131,7 +136,8 @@ class Store(context: Context) {
                 watchlist = m["watchlist"].list().mapNotNull { it.str() }.ifEmpty { if (m.containsKey("watchlist")) emptyList() else d.watchlist },
                 holdings = m["holdings"].list().map { it.obj() }.mapNotNull { h ->
                     val sym = h["symbol"].str() ?: return@mapNotNull null
-                    Holding(sym, h["shares"].num() ?: return@mapNotNull null, h["avgCost"].num(), h["addedAt"].num()?.toLong() ?: 0L)
+                    Holding(sym, h["shares"].num() ?: return@mapNotNull null, h["avgCost"].num(), h["addedAt"].num()?.toLong() ?: 0L,
+                        h["costNok"].num(), h["since"] as? String, h["isin"] as? String)
                 },
                 settings = Settings(
                     baseCurrency = st["baseCurrency"].str() ?: d.settings.baseCurrency,

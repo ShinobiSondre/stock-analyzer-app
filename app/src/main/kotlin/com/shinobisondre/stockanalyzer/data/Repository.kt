@@ -28,7 +28,10 @@ import com.shinobisondre.stockanalyzer.engine.QualityScore
 import com.shinobisondre.stockanalyzer.engine.Series
 import com.shinobisondre.stockanalyzer.engine.TrackRecord
 import com.shinobisondre.stockanalyzer.engine.TrackSummary
+import com.shinobisondre.stockanalyzer.engine.LedgerPosition
 import com.shinobisondre.stockanalyzer.engine.Link
+import com.shinobisondre.stockanalyzer.engine.NordnetNotes
+import com.shinobisondre.stockanalyzer.engine.Trade
 import com.shinobisondre.stockanalyzer.engine.Ripple
 import com.shinobisondre.stockanalyzer.engine.RippleNode
 import com.shinobisondre.stockanalyzer.engine.RippleStat
@@ -92,7 +95,17 @@ data class ImportCandidate(
     val costText: String,
     val note: String,
     val selected: Boolean,
+    /** From imported trades. */
+    val costNok: Double? = null,
+    val since: String? = null,
+    val isin: String? = null,
 )
+
+/** Imported Nordnet trades and which ticker each security (ISIN) maps to. */
+class TradeBook(val trades: List<Trade>, val symbols: Map<String, String>) {
+    fun forSymbol(symbol: String): List<Trade> = trades.filter { symbols[it.isin] == symbol }
+    val ledger by lazy { NordnetNotes.ledger(trades) }
+}
 
 class QuickWin(
     val symbol: String,
@@ -245,7 +258,9 @@ class Repository(private val context: Context, val store: Store) {
                 val c = core.getOrNull()
                 val rate = c?.let { fxRate(it.currency, base) }
                 val sector = runCatching { if (c != null) sectorOf(c.symbol) else null }.getOrNull()
-                val input = PositionInput(h.symbol, h.shares, h.avgCost, c?.price, c?.chart?.prevClose, c?.currency, rate, sector)
+                val nokToBase = if (h.costNok != null) fxRate("NOK", base) else null
+                val input = PositionInput(h.symbol, h.shares, h.avgCost, c?.price, c?.chart?.prevClose, c?.currency, rate, sector,
+                    costPerShareBase = h.costNok?.let { cn -> nokToBase?.let { cn * it } })
                 HoldingView(h, c, Portfolio.value(input), c?.analysis?.forecast(horizon),
                     core.exceptionOrNull()?.message ?: if (c != null && rate == null) "No ${Money.normalize(c.currency).first}→$base rate" else null)
             }
@@ -340,6 +355,43 @@ class Repository(private val context: Context, val store: Store) {
         }
         return ImportCandidate(p, chosen?.symbol ?: "", chosen?.name, shares?.let { F2.qty(it) } ?: "", cost?.let { F2.plain(it) } ?: "", note,
             selected = chosen != null && shares != null && shares > 0)
+    }
+
+    // ── Imported trades ──────────────────────────────────────────────────────
+    private val tradesFile = java.io.File(context.filesDir, "trades.json")
+
+    fun tradeBook(): TradeBook? = runCatching {
+        val m = MiniJson.parse(tradesFile.readText()).obj()
+        TradeBook(m["trades"].list().map { Trade.fromMap(it.obj()) }, m["symbols"].obj().mapValues { it.value.str() ?: "" }.filterValues { it.isNotBlank() })
+    }.getOrNull()
+
+    suspend fun saveTrades(book: TradeBook) = withContext(Dispatchers.IO) {
+        val tmp = java.io.File(tradesFile.parentFile, "trades.json.tmp")
+        tmp.writeText(MiniJson.write(linkedMapOf("trades" to book.trades.map { it.toMap() }, "symbols" to book.symbols)))
+        tmp.renameTo(tradesFile)
+    }
+
+    /** Ticker for a position from the trades: Nordnet's code + market, checked against Yahoo; else a name search. */
+    suspend fun resolveLedger(p: LedgerPosition): ImportCandidate {
+        val guess = NordnetNotes.yahooTicker(p)
+        var sym: String? = null; var name: String? = null
+        if (guess != null) runCatching { chart(guess, 30 * 60_000L, "5d") }.getOrNull()?.let { c ->
+            if (Money.normalize(c.meta.currency).first == Money.normalize(p.currency).first) { sym = guess; name = c.meta.name }
+        }
+        if (sym == null) for (q in BrokerScreenshot.searchQueries(p.name) + p.isin) {
+            val hit = runCatching { Yahoo.search(q).first }.getOrDefault(emptyList()).firstOrNull { it.type in setOf("EQUITY", "ETF", "MUTUALFUND") }
+            if (hit != null) { sym = hit.symbol; name = hit.name; break }
+        }
+        val buys = p.trades.count { it.buy }; val sells = p.trades.size - buys
+        val since = p.firstBuy?.let { java.time.LocalDate.parse(it).format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH)) }
+        val note = listOfNotNull(
+            since?.let { "Held since $it" },
+            "$buys buy${if (buys == 1) "" else "s"}" + if (sells > 0) ", $sells sell${if (sells == 1) "" else "s"}" else "",
+            p.avgCostNok?.let { "cost ${F2.n(it)} kr/share incl. fees" },
+        ).joinToString(" · ")
+        val parsed = ParsedHolding(p.name, p.quantity, p.avgCost, p.currency, null, null, null, p.currency, null, "")
+        return ImportCandidate(parsed, sym ?: "", name, F2.qty(p.quantity), p.avgCost?.let { F2.plain(it) } ?: "",
+            if (sym == null) "No ticker found — type it in. $note" else note, selected = sym != null, costNok = p.avgCostNok, since = p.firstBuy, isin = p.isin)
     }
 
     // ── Quick wins ───────────────────────────────────────────────────────────

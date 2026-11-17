@@ -82,6 +82,8 @@ data class PositionInput(
     /** Units of base currency per one unit of the (normalised) quote currency. */
     val fxToBase: Double?,
     val sector: String?,
+    /** What one share actually cost in the base currency (exchange rate on the day + fees), from imported trades. */
+    val costPerShareBase: Double? = null,
 )
 
 data class PositionValue(
@@ -126,9 +128,14 @@ object Portfolio {
         val fx = p.fxToBase
         if (p.price == null || fx == null) return PositionValue(p, null, null, null, null, null)
         val value = p.shares * p.price * mult * fx
-        val cost = p.avgCost?.let { p.shares * it * mult * fx }
+        // Real cost from trades (historical FX and fees) when known; otherwise the average price at today's rate.
+        val cost = p.costPerShareBase?.let { p.shares * it } ?: p.avgCost?.let { p.shares * it * mult * fx }
         val pnl = cost?.let { value - it }
-        val pnlPct = if (p.avgCost != null && p.avgCost > 0) (p.price - p.avgCost) / p.avgCost * 100 else null
+        val pnlPct = when {
+            cost != null && cost > 0 && p.costPerShareBase != null -> (value / cost - 1) * 100
+            p.avgCost != null && p.avgCost > 0 -> (p.price - p.avgCost) / p.avgCost * 100
+            else -> null
+        }
         val day = p.prevClose?.let { p.shares * (p.price - it) * mult * fx }
         return PositionValue(p, value, cost, pnl, pnlPct, day)
     }

@@ -35,6 +35,7 @@ object EngineSelfTest {
         dayAfter()
         tyler()
         ripple()
+        nordnetNotes()
         println("EngineSelfTest: $passed checks passed, ${failures.size} failed")
         failures.forEach { println("  FAIL $it") }
         return failures.toList()
@@ -412,6 +413,55 @@ object EngineSelfTest {
         check("ripple explain", Ripple.explain("NVDA", a!!).contains("1.5%") && Ripple.explain("NVDA", c!!).contains("own thing"))
         check("ripple map", Ripple.nodesFor("nvda")?.any { it.symbol == "TSM" && it.link == Link.MAKERS } == true)
     }
+
+    /** Three made-up contract notes in the layout of Nordnet's transaction export. */
+    private fun nordnetNotes() {
+        fun note(nr: String, date: String, side: String, sec: String, fx: String?, fills: List<String>, total: String, amount: String, fee: String, label: String) = """
+            Nr $nr
+            SLUTTSEDDEL I KOMMISJON Utskriftsdato $date
+            Portefølje: 1
+            Handelsdag: $date
+            Oppgjørsdag: $date
+            På vegne av deg har vi $side følgende verdipapir:
+            $sec
+            Avregning
+            ${fx?.let { "Valutakurs $it" } ?: ""}
+            Antall Pris Valuta Marked Tid
+            ${fills.joinToString("\n")}
+            $total
+            Beløp (NOK) $amount
+            Kurtasje (NOK) $fee
+            Avgift (NOK) 0,00
+            $label (NOK) ${"%,.2f".format(java.util.Locale.US, (nok(amount) + (if (label == "Å betale") 1 else -1) * nok(fee))).replace(",", " ").replace(".", ",")}
+            Adresse Telefon 0
+        """.trimIndent()
+        val text = listOf(
+            note("101", "12.12.2024", "kjøpt", "NVDA (ISIN US67066G1040) - NVIDIA", "USD/NOK 11,000000",
+                listOf("10 130,0000 USD US EXCHANGE NQ 15:31:02.123", "10 140,0000 USD US EXCHANGE NQ 15:31:05.000"), "20 135,0000", "29 700,00", "99,00", "Å betale"),
+            note("102", "03.02.2025", "kjøpt", "NVDA (ISIN US67066G1040) - NVIDIA", "USD/NOK 10,000000",
+                listOf("10 120,0000 USD US EXCHANGE NQ 16:00:00.000"), "10 120,0000", "12 000,00", "49,00", "Å betale"),
+            note("103", "01.06.2025", "solgt", "NVDA (ISIN US67066G1040) - NVIDIA", "USD/NOK 10,500000",
+                listOf("15 150,0000 USD US EXCHANGE NQ 17:45:10.500"), "15 150,0000", "23 625,00", "99,00", "Til gode"),
+            note("104", "05.06.2025", "kjøpt", "DNB Teknologi A (ISIN NO0010337678) - DNB Teknologi A", null,
+                listOf("0.0116 6 564,3048 NOK DNB NOR NORGE 00:00:00.000"), "0.0116 6 564,3048", "76,15", "0,00", "Å betale"),
+        ).joinToString("\n")
+        val t = NordnetNotes.parse(text)
+        check("notes count", t.size == 4) { t.toString() }
+        val a = t.first()
+        check("notes fills", a.quantity == 20.0 && kotlin.math.abs(a.price - 135.0) < 1e-9 && a.time == "15:31:02" && a.date == "2024-12-12" && a.fx == 11.0 && a.feeNok == 99.0 && a.totalNok == 29799.0) { "$a" }
+        check("notes sell", !t[2].buy && t[2].totalNok == 23526.0)
+        check("notes fund", t[3].quantity == 0.0116 && kotlin.math.abs(t[3].price - 6564.3048) < 1e-9 && t[3].time == "")
+        val l = NordnetNotes.ledger(t)
+        val nv = l.first { it.code == "NVDA" }
+        // 30 shares cost 29 799 + 12 049 = 41 848 NOK → 1 394.93/share; sell 15 → 15 left.
+        check("ledger qty", nv.quantity == 15.0 && kotlin.math.abs(nv.avgCost!! - (20 * 135.0 + 10 * 120.0) / 30) < 1e-9) { "$nv" }
+        near("ledger cost nok", nv.avgCostNok, 41848.0 / 30, 1e-9)
+        near("ledger realised", nv.realizedNok, 23526.0 - 41848.0 / 30 * 15, 1e-6)
+        check("ledger since", nv.firstBuy == "2024-12-12")
+        check("ticker map", NordnetNotes.yahooTicker(nv) == "NVDA" && NordnetNotes.yahooTicker(l.first { it.code.startsWith("DNB") }) == null)
+        check("nok parse", NordnetNotes.nok("9 907,14") == 9907.14)
+    }
+    private fun nok(s: String) = s.replace(" ", "").replace(',', '.').toDouble()
 
     @JvmStatic
     fun main(args: Array<String>) {

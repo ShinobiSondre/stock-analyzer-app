@@ -7,6 +7,7 @@ import com.shinobisondre.stockanalyzer.StockApp
 import com.shinobisondre.stockanalyzer.data.Core
 import com.shinobisondre.stockanalyzer.data.Extras
 import com.shinobisondre.stockanalyzer.data.Holding
+import com.shinobisondre.stockanalyzer.data.F2
 import com.shinobisondre.stockanalyzer.data.MarketData
 import com.shinobisondre.stockanalyzer.data.PortfolioView
 import com.shinobisondre.stockanalyzer.data.SearchHit
@@ -100,6 +101,9 @@ data class ShotImport(
     val candidates: List<com.shinobisondre.stockanalyzer.data.ImportCandidate> = emptyList(),
     val error: String? = null,
     val replaceAll: Boolean = false,
+    /** Trade import: one-line summary and the trades to save with the holdings. */
+    val summary: String? = null,
+    val book: com.shinobisondre.stockanalyzer.data.TradeBook? = null,
 )
 
 data class UpdateState(
@@ -139,6 +143,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var shotJob: Job? = null
     val tyler = MutableStateFlow(TylerState())
     private var tylerJob: Job? = null
+    /** Imported Nordnet trades (null until imported). */
+    val trades = MutableStateFlow<com.shinobisondre.stockanalyzer.data.TradeBook?>(null)
     /** Ripple tree: the stock in the middle and its loaded tree. */
     val rippleRoot = MutableStateFlow(state.value.holdings.firstOrNull()?.symbol?.takeIf { com.shinobisondre.stockanalyzer.engine.Ripple.nodesFor(it) != null } ?: "NVDA")
     val ripple = MutableStateFlow<Load<com.shinobisondre.stockanalyzer.data.Repository.RippleView>>(Load.Idle)
@@ -162,6 +168,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Holdings too, so the Markets banner can flag a big mover you own.
         state.value.holdings.forEach { load(it.symbol, permits = true) }
         loadTylerCache()
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { trades.value = repo.tradeBook() }
         autoUpdate()
     }
 
@@ -271,12 +278,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val existing = st.holdings.firstOrNull { it.symbol == sym }
                 val next = when {
                     existing == null -> st.holdings + Holding(sym, shares, avgCost)
-                    replace -> st.holdings.map { if (it.symbol == sym) it.copy(shares = shares, avgCost = avgCost) else it }
+                    replace -> st.holdings.map { if (it.symbol == sym) it.copy(shares = shares, avgCost = avgCost, costNok = if (avgCost == it.avgCost) it.costNok else null) else it }
                     else -> st.holdings.map {
                         if (it.symbol != sym) it else {
                             val total = it.shares + shares
                             val cost = if (it.avgCost != null && avgCost != null) (it.avgCost * it.shares + avgCost * shares) / total else avgCost ?: it.avgCost
-                            it.copy(shares = total, avgCost = cost)
+                            it.copy(shares = total, avgCost = cost, costNok = null)
                         }
                     }
                 }
@@ -440,6 +447,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Nordnet's transaction export (PDF of contract notes) → trades → positions with real cost and dates. */
+    fun importTrades(uri: android.net.Uri) {
+        shot.value = ShotImport(stage = "Reading the PDF…")
+        shotJob?.cancel()
+        shotJob = viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val text = runCatching { com.shinobisondre.stockanalyzer.data.Pdf.text(ctx, uri) }.getOrElse {
+                shot.value = ShotImport(busy = false, error = "Couldn't read the PDF: ${it.message}"); return@launch
+            }
+            val trades = com.shinobisondre.stockanalyzer.engine.NordnetNotes.parse(text)
+            if (trades.isEmpty()) {
+                shot.value = ShotImport(busy = false, error = "No trades found. In Nordnet: Min side → Transaksjoner og notaer → Sluttsedler → export as PDF, then pick that file.")
+                return@launch
+            }
+            val ledger = com.shinobisondre.stockanalyzer.engine.NordnetNotes.ledger(trades)
+            val open = ledger.filter { it.open }
+            val closed = ledger.filter { !it.open }
+            shot.value = ShotImport(stage = "Matching ${open.size} holdings to tickers…")
+            val cands = open.map { p -> async { repo.resolveLedger(p) } }.map { it.await() }
+            fun d(s: String) = runCatching { java.time.LocalDate.parse(s).format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH)) }.getOrDefault(s)
+            val realised = closed.sumOf { it.realizedNok } + open.sumOf { it.realizedNok }
+            val summary = "${trades.size} trades from ${d(trades.first().date)} to ${d(trades.last().date)}. You still hold ${open.size}; " +
+                "${closed.size} were sold, with ${if (realised >= 0) "a gain" else "a loss"} of about ${F2.n(kotlin.math.abs(realised))} kr. " +
+                "Costs use the exchange rate and fees from each trade."
+            shot.value = ShotImport(busy = false, stage = "review", candidates = cands, replaceAll = true, summary = summary,
+                book = com.shinobisondre.stockanalyzer.data.TradeBook(trades, emptyMap()))
+        }
+    }
+
     fun editCandidate(i: Int, fn: (com.shinobisondre.stockanalyzer.data.ImportCandidate) -> com.shinobisondre.stockanalyzer.data.ImportCandidate) {
         shot.update { s -> s?.copy(candidates = s.candidates.mapIndexed { k, c -> if (k == i) fn(c) else c }) }
     }
@@ -453,7 +489,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val sym = c.symbol.trim().uppercase()
             val sh = c.sharesText.trim().replace(',', '.').replace(" ", "").toDoubleOrNull()
             val cost = c.costText.trim().replace(" ", "").let { t -> if (t.isEmpty()) null else t.replace(',', '.').toDoubleOrNull() }
-            if (sym.isEmpty() || sh == null || sh <= 0) null else Holding(sym, sh, cost)
+            if (sym.isEmpty() || sh == null || sh <= 0) null
+            else Holding(sym, sh, cost, costNok = c.costNok.takeIf { cost == c.parsed.avgCost?.let { a -> F2r(a) } || c.costText.isBlank() }, since = c.since, isin = c.isin)
         }.distinctBy { it.symbol }
         if (chosen.isEmpty()) { say("Nothing selected to import"); return }
         viewModelScope.launch {
@@ -461,10 +498,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val keep = if (s.replaceAll) emptyList() else st.holdings.filter { h -> chosen.none { it.symbol == h.symbol } }
                 st.copy(holdings = keep + chosen)
             }
+            s.book?.let { b ->
+                // Remember which ticker each security is, for the trade history on each stock page.
+                val map = b.ledger.associate { p -> p.isin to (s.candidates.firstOrNull { it.isin == p.isin }?.symbol?.trim()?.uppercase()
+                    ?: com.shinobisondre.stockanalyzer.engine.NordnetNotes.yahooTicker(p) ?: "") }
+                val book = com.shinobisondre.stockanalyzer.data.TradeBook(b.trades, map)
+                repo.saveTrades(book)
+                trades.value = book
+            }
             shot.value = null
             chosen.forEach { load(it.symbol, permits = true) }
             loadPortfolio(true)
-            say("Imported ${chosen.size} holding${if (chosen.size == 1) "" else "s"} from the screenshot")
+            say("Imported ${chosen.size} holding${if (chosen.size == 1) "" else "s"}" + if (s.book != null) " and ${s.book.trades.size} trades" else " from the screenshot")
         }
     }
 
@@ -589,3 +634,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissSplash() { splash.value = null }
 }
+
+/** Same rounding the review screen used to show a cost, so an untouched cost keeps the exact trade cost. */
+private fun F2r(v: Double): Double = F2.plain(v).toDouble()

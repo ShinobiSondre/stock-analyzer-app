@@ -102,6 +102,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // On-device OCR for importing broker screenshots (bundled model, works offline).
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Reads Nordnet's transaction export (PDF of contract notes)
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     // Tyler Hill videos, the FaithScroll way: native playback (media3), stream lookup (NewPipeExtractor),
     // YouTube proof-of-origin tokens made in a hidden WebView (RxJava + androidx.webkit), thumbnails (Coil).
     implementation("androidx.media3:media3-exoplayer:1.5.1")

@@ -160,6 +160,8 @@ private fun AnalysisBody(vm: MainViewModel, core: Core, extras: Load<Extras>?, c
 private fun CardsGrid(vm: MainViewModel, core: Core, extras: Load<Extras>?, calls: List<LoggedCall>, includeChart: Boolean, chart: @Composable () -> Unit) {
     val a = core.analysis
     val tylerState by vm.tyler.collectAsStateWithLifecycle()
+    val book by vm.trades.collectAsStateWithLifecycle()
+    val myTrades = remember(book, core.symbol) { book?.forSymbol(core.symbol).orEmpty() }
     val hasTylerTake = remember(tylerState.takes, core.symbol) {
         com.shinobisondre.stockanalyzer.engine.TylerTalk.latestOn(tylerState.takes.values.toList(), core.symbol) != null
     }
@@ -179,6 +181,7 @@ private fun CardsGrid(vm: MainViewModel, core: Core, extras: Load<Extras>?, call
             if (a.rules.setups.isNotEmpty()) item(key = "setups") { SetupsCard(a) }
             a.holding?.let { h -> item(key = "hold") { HoldingCard(h) } }
             if (hasTylerTake) item(key = "tylerTake") { TylerOnStock(vm, core.symbol) }
+            if (myTrades.isNotEmpty()) item(key = "trades") { TradesCard(core, myTrades, vm.state.value.holdings.firstOrNull { it.symbol == core.symbol }) }
             item(key = "summary") { SummaryCard(a) }
             item(key = "invested") { InvestedCard(core, vm.state.value.settings.baseCurrency) }
             item(key = "ripple") { RippleCard(vm, core.symbol) }
@@ -236,6 +239,43 @@ private fun PriceHeader(core: Core, extras: Extras?) {
             }
             Text("52-week range", color = Palette.muted, fontSize = 11.sp)
         }
+    }
+}
+
+/** Your own buys and sells of this stock, from the imported Nordnet trades. */
+@Composable
+private fun TradesCard(core: Core, trades: List<com.shinobisondre.stockanalyzer.engine.Trade>, holding: com.shinobisondre.stockanalyzer.data.Holding?) {
+    val pos = remember(trades) { com.shinobisondre.stockanalyzer.engine.NordnetNotes.ledger(trades).firstOrNull() }
+    val fmt = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH)
+    fun d(s: String) = runCatching { java.time.LocalDate.parse(s).format(fmt) }.getOrDefault(s)
+    var all by remember { mutableStateOf(false) }
+    SectionCard("Your trades", subtitle = "${trades.size} from your Nordnet export") {
+        if (pos != null) {
+            if (pos.open) {
+                Text("You've held ${F.num(pos.quantity, if (pos.quantity % 1.0 == 0.0) 0 else 2)} shares since ${pos.firstBuy?.let { d(it) } ?: "—"}.", fontSize = 14.sp)
+                pos.avgCostNok?.let { cn ->
+                    Text("They cost ${F.num(cn, 0)} kr each on average (exchange rate and fees on the day) — ${F.price(pos.avgCost, pos.currency)} in ${pos.currency}.",
+                        fontSize = 13.sp, color = Palette.muted, modifier = Modifier.padding(top = 2.dp))
+                }
+            } else Text("You've sold all your shares.", fontSize = 14.sp)
+            if (kotlin.math.abs(pos.realizedNok) > 0.5) Text(
+                "Already sold: ${if (pos.realizedNok >= 0) "gain" else "loss"} of ${F.num(kotlin.math.abs(pos.realizedNok), 0)} kr after fees.",
+                fontSize = 13.sp, color = if (pos.realizedNok >= 0) Palette.up else Palette.down, modifier = Modifier.padding(top = 2.dp))
+            Spacer(Modifier.height(8.dp))
+        }
+        val shown = trades.sortedWith(compareByDescending<com.shinobisondre.stockanalyzer.engine.Trade> { it.date }.thenByDescending { it.time }).let { if (all) it else it.take(6) }
+        shown.forEach { t ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("${if (t.buy) "Bought" else "Sold"} ${F.num(t.quantity, if (t.quantity % 1.0 == 0.0) 0 else 4)} @ ${F.price(t.price, t.currency)}",
+                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (t.buy) Palette.up else Palette.down)
+                    Text(d(t.date) + (if (t.time.isNotBlank()) " · ${t.time.take(5)}" else "") + (t.fx?.let { " · ${t.currency}/NOK ${F.num(it, 2)}" } ?: ""),
+                        fontSize = 11.sp, color = Palette.muted)
+                }
+                t.totalNok?.let { Text("${F.num(it, 0)} kr", fontSize = 13.sp) }
+            }
+        }
+        if (trades.size > 6) TextButton(onClick = { all = !all }) { Text(if (all) "Show fewer" else "Show all ${trades.size}") }
     }
 }
 

@@ -88,6 +88,12 @@ class MainActivity : ComponentActivity() {
         intent ?: return
         intent.getStringExtra(EXTRA_SYMBOL)?.let { vm.open(it) }
         intent.getStringExtra(EXTRA_TAB)?.let { name -> Tab.entries.firstOrNull { it.name == name } }?.let { vm.close(); vm.tab.value = it }
+        // Nordnet's transaction export (PDF) shared to the app: import the trades.
+        if (intent.action == Intent.ACTION_SEND && intent.type == "application/pdf") {
+            val u: Uri? = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            if (u != null) { vm.close(); vm.tab.value = Tab.PORTFOLIO; vm.importTrades(u) }
+        }
         // A screenshot shared from Nordnet (or the gallery): import the holdings on it.
         if (intent.type?.startsWith("image/") == true) {
             val uris: List<Uri> = when (intent.action) {

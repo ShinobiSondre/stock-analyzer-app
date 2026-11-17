@@ -100,6 +100,14 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
         Updater.holdInstall = false
         vm.importScreenshots(uris)
     }
+    val pickPdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        Updater.holdInstall = false
+        if (uri != null) vm.importTrades(uri)
+    }
+    val pickPdf = {
+        Updater.holdInstall = true
+        pickPdfLauncher.launch(arrayOf("application/pdf"))
+    }
     val pick = {
         Updater.holdInstall = true
         pickShots.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -115,11 +123,12 @@ fun PortfolioScreen(vm: MainViewModel, twoPane: Boolean) {
         }
         full {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = pick, modifier = Modifier.weight(1f)) { Text("Import Nordnet screenshot") }
-                OutlinedButton(onClick = { importing = true }) { Text("Paste") }
+                Button(onClick = pickPdf, modifier = Modifier.weight(1f)) { Text("Import trades (PDF)", maxLines = 1) }
+                OutlinedButton(onClick = pick, modifier = Modifier.weight(1f)) { Text("Screenshot", maxLines = 1) }
+                OutlinedButton(onClick = { importing = true }) { Text("Paste", maxLines = 1) }
             }
-            Text("Holdings tab in the Nordnet app → screenshot → import (or share the screenshot straight to StockAnalyzer). Scroll and take more screenshots for long lists — pick them all at once.",
-                color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp))
+            Text("Best: Nordnet → Transaksjoner og notaer → export your contract notes (sluttsedler) as PDF and import it — every buy and sell with date, time, price, exchange rate and fees. Or share a screenshot of the Holdings list.",
+                color = Palette.muted, fontSize = 11.sp, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 4.dp))
         }
         if (st.holdings.isEmpty()) {
             full {
@@ -171,7 +180,8 @@ private fun ScreenshotReview(vm: MainViewModel, s: ShotImport, onPickAgain: () -
                 }
                 s.error != null -> Text(s.error, fontSize = 14.sp)
                 else -> Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Check the tickers and share counts. Nordnet's list shows value and price, not the number of shares, so shares are worked out from value ÷ price at today's exchange rate.",
+                    if (s.summary != null) Text(s.summary, fontSize = 13.sp)
+                    else Text("Check the tickers and share counts. Nordnet's list shows value and price, not the number of shares, so shares are worked out from value ÷ price at today's exchange rate.",
                         color = Palette.muted, fontSize = 12.sp)
                     s.candidates.forEachIndexed { i, c -> CandidateRow(c, onChange = { fn -> vm.editCandidate(i, fn) }) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -249,6 +259,8 @@ private fun HoldingRow(r: HoldingView, base: String, onOpen: () -> Unit, onEdit:
         Column(Modifier.weight(1.2f)) {
             Text(h.symbol, fontWeight = FontWeight.Bold)
             Text("${F.num(h.shares, if (h.shares % 1.0 == 0.0) 0 else 2)} × ${F.price(c?.price, c?.currency)}", color = Palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            h.since?.let { sd -> runCatching { java.time.LocalDate.parse(sd).format(java.time.format.DateTimeFormatter.ofPattern("MMM yyyy", java.util.Locale.ENGLISH)) }.getOrNull() }
+                ?.let { Text("since $it", color = Palette.muted, fontSize = 11.sp, maxLines = 1) }
             r.error?.let { Text(it, color = Palette.warn, fontSize = 11.sp, maxLines = 2) }
         }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
