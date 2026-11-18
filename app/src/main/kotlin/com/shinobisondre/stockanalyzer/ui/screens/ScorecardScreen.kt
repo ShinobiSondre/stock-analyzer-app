@@ -211,8 +211,9 @@ fun RangeCard(ranges: List<RangeForecast>, currency: String, modifier: Modifier 
                 Text(l.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
             }
         }
-        if (r.pastLowHit != null && r.pastHighHit != null)
-            Text("Tested on this stock's last months (tuned on older data): reached the likely low ${(r.pastLowHit * 100).toInt()}% and the likely high ${(r.pastHighHit * 100).toInt()}% of the time — about 50% means well tuned.",
+        val lh = r.pastLowHit; val hh = r.pastHighHit
+        if (lh != null && hh != null)
+            Text("Tested on this stock's last months (tuned on older data): reached the likely low ${(lh * 100).toInt()}% and the likely high ${(hh * 100).toInt()}% of the time — about 50% means well tuned.",
                 fontSize = 11.sp, color = Palette.muted, modifier = Modifier.padding(top = 8.dp))
     }
 }

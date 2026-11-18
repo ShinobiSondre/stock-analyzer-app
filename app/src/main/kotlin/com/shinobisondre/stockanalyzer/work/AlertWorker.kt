@@ -194,14 +194,15 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             val rg = weekRanges[sym]; val px = core.price
             if (settings.notifySwing && rg != null && px != null && core.chart.meta.sessionOpen()) {
                 val n = sym.removeSuffix(".OL")
-                if (rg.likelyLow != null && px <= rg.likelyLow && rangeSeen.add("${rg.key}|low"))
+                val lo = rg.likelyLow; val hi = rg.likelyHigh
+                if (lo != null && px <= lo && rangeSeen.add("${rg.key}|low"))
                     newAlerts += alert(sym, "range", "$n dipped to its likely low",
-                        "Now ${"%.2f".format(px)} — the app expected a dip to about ${"%.2f".format(rg.likelyLow)} this week" +
+                        "Now ${"%.2f".format(px)} — the app expected a dip to about ${"%.2f".format(lo)} this week" +
                             (rg.wideLow?.let { " (only 1 in 10 weeks it goes below ${"%.2f".format(it)})" } ?: "") + ". " +
                             if (sym in owned) "If you were thinking of adding more, this is the cheaper zone it predicted." else "If you wanted to buy, this is the cheaper zone it predicted.")
-                if (sym in owned && rg.likelyHigh != null && px >= rg.likelyHigh && rangeSeen.add("${rg.key}|high"))
+                if (sym in owned && hi != null && px >= hi && rangeSeen.add("${rg.key}|high"))
                     newAlerts += alert(sym, "range", "$n reached its likely high",
-                        "Now ${"%.2f".format(px)} — about as high as the app expected this week (${"%.2f".format(rg.likelyHigh)}). A realistic point to take some profit if you want to; it goes past this about half the time.")
+                        "Now ${"%.2f".format(px)} — about as high as the app expected this week (${"%.2f".format(hi)}). A realistic point to take some profit if you want to; it goes past this about half the time.")
             }
             watch[sym] = next
         }
