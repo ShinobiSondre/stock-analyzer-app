@@ -5,6 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+// Firebase push (instant alerts) is switched on once google-services.json is added to app/.
+if (file("google-services.json").exists()) apply(plugin = "com.google.gms.google-services")
 
 // CI passes -PversionCode=<run number>; local builds default to 1.
 val appVersionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
@@ -20,6 +22,8 @@ android {
         versionCode = appVersionCode
         versionName = "1.0.$appVersionCode"
         buildConfigField("String", "UPDATE_REPO", "\"ShinobiSondre/stock-analyzer-app\"")
+        // The instant-alerts server (Cloudflare Worker in /server). Empty = not deployed yet.
+        buildConfigField("String", "PUSH_URL", "\"${(project.findProperty("pushUrl") as String?) ?: file("../server/URL").takeIf { it.exists() }?.readText()?.trim() ?: ""}\"")
         // 64-bit ARM only (every current Galaxy): keeps ML Kit's OCR model from tripling the APK size.
         ndk { abiFilters += listOf("arm64-v8a") }
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_static") } }
@@ -119,6 +123,10 @@ dependencies {
     // Fallback speech recognition (FaithScroll's English engine) if Whisper can't load
     implementation("com.alphacephei:vosk-android:0.3.47")
     implementation("net.java.dev.jna:jna:5.13.0@aar")
+
+    // Instant alerts pushed from our server (Firebase Cloud Messaging), like Holmstead.
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
 
     testImplementation("junit:junit:4.13.2")
 }

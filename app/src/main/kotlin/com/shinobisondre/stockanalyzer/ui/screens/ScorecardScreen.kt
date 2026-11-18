@@ -60,7 +60,8 @@ private fun waitText(k: GuessKind) = when (k) {
 @Composable
 fun ScorecardScreen(vm: MainViewModel) {
     val s by vm.score.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { vm.loadScore() }
+    val changed by vm.repo.guessesChanged.collectAsStateWithLifecycle()
+    LaunchedEffect(changed) { vm.loadScore() }
     var filter by rememberSaveable { mutableStateOf<GuessKind?>(null) }
     AdaptiveGrid(contentPadding = PaddingValues(bottom = 24.dp)) {
         full {
@@ -166,6 +167,9 @@ private fun GuessRow(vm: MainViewModel, c: Checked, modifier: Modifier = Modifie
 @Composable
 fun ScoreTeaser(vm: MainViewModel, kind: GuessKind, modifier: Modifier = Modifier) {
     val s by vm.score.collectAsStateWithLifecycle()
+    val changed by vm.repo.guessesChanged.collectAsStateWithLifecycle()
+    // Picks save their calls as they load: refresh at most every 20 s while that happens.
+    LaunchedEffect(changed) { kotlinx.coroutines.delay(20_000); vm.loadScore() }
     LaunchedEffect(Unit) { vm.loadScore() }
     val v = (s as? Load.Ok)?.v ?: return
     val lines = v.board.lines[kind].orEmpty()

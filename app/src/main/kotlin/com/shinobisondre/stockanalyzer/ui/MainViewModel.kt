@@ -563,7 +563,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun loadScore(force: Boolean = false) {
         val cur = score.value
         if (cur is Load.Loading) return
-        if (!force && cur is Load.Ok && System.currentTimeMillis() - cur.v.at < 15 * 60_000) return
+        if (!force && cur is Load.Ok && System.currentTimeMillis() - cur.v.at < 15 * 60_000 && repo.guessesChanged.value < cur.v.at) return
         if (cur !is Load.Ok) score.value = Load.Loading
         viewModelScope.launch { score.value = runCatching { repo.scorecard() }.fold({ Load.Ok(it) }, { Load.Err(it.message ?: "Failed") }) }
     }

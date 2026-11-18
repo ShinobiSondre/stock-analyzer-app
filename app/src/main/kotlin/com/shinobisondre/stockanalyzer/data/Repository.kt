@@ -657,6 +657,8 @@ class Repository(private val context: Context, val store: Store) {
 
     // ── Scorecard: what the app said, checked against what happened ─────────
     private val guessFile = java.io.File(context.filesDir, "guesses.json")
+    /** Bumped whenever new guesses are saved, so the scorecard knows to reload. */
+    val guessesChanged = kotlinx.coroutines.flow.MutableStateFlow(0L)
 
     private fun readGuesses(): List<Guess> = runCatching {
         MiniJson.parse(guessFile.readText()).obj()["items"].list().mapNotNull { Guess.fromMap(it.obj()) }
@@ -676,6 +678,7 @@ class Repository(private val context: Context, val store: Store) {
                     val tmp = java.io.File(guessFile.parentFile, "guesses.json.tmp")
                     tmp.writeText(MiniJson.write(linkedMapOf("items" to all.map { it.toMap() })))
                     tmp.renameTo(guessFile)
+                    guessesChanged.value = System.currentTimeMillis()
                 }
             }
         }

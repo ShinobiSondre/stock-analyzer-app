@@ -99,6 +99,9 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         val st = store.value
         if (!st.settings.alertsEnabled) return Result.success()
         val newAlerts = mutableListOf<AlertItem>()
+        // When the instant-alerts server is on, it covers moves, lows/highs, news and your quick wins every minute.
+        val server = com.shinobisondre.stockanalyzer.push.Push.active(applicationContext)
+        runCatching { com.shinobisondre.stockanalyzer.push.Push.register(applicationContext) }
         val watch = st.watch.toMutableMap()
         val settings = st.settings
 
@@ -180,7 +183,7 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             // Big intraday move (once per day).
             val chg = core.changePct
             val today = core.chart.last?.date
-            if (settings.notifyMoves && chg != null && abs(chg) >= settings.bigMovePct && prev.moveAlertDate != today) {
+            if (!server && settings.notifyMoves && chg != null && abs(chg) >= settings.bigMovePct && prev.moveAlertDate != today) {
                 val dir = if (chg > 0) "up" else "down"
                 // For big up-days, add the sell-by-the-close lean from 20 years of similar days.
                 val qw = if (chg > 0) repo.quickFromChart(sym, core.chart, st.holdings.any { it.symbol == sym }, sym in st.watchlist) else null
@@ -192,7 +195,7 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             }
             // Predicted low/high reached (once per prediction): a buy zone for watched stocks, a take-profit zone for yours.
             val rg = weekRanges[sym]; val px = core.price
-            if (settings.notifySwing && rg != null && px != null && core.chart.meta.sessionOpen()) {
+            if (!server && settings.notifySwing && rg != null && px != null && core.chart.meta.sessionOpen()) {
                 val n = sym.removeSuffix(".OL")
                 val lo = rg.likelyLow; val hi = rg.likelyHigh
                 if (lo != null && px <= lo && rangeSeen.add("${rg.key}|low"))
@@ -221,10 +224,10 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         }
 
         // Breaking news on the stocks you own: new headlines that sound clearly good or bad.
-        if (settings.notifyNews) runCatching { newsCheck(st.holdings.map { it.symbol }) }
+        if (settings.notifyNews && !server) runCatching { newsCheck(st.holdings.map { it.symbol }) }
 
         // Quick wins from the server scan: one small download, matched with your stocks on the phone.
-        if (settings.notifyQuickWins) runCatching { quickWinCheck(repo) }
+        if (settings.notifyQuickWins) runCatching { quickWinCheck(repo, onlyOthers = server) }
 
         // New Tyler Hill video → summarise it and say what he expects (checked every ~3 hours).
         if (settings.notifyTyler) runCatching { tylerCheck(repo) }
@@ -252,7 +255,7 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         prefs.edit().putStringSet("seen", seen.toList().takeLast(400).toSet()).apply()
     }
 
-    private suspend fun quickWinCheck(repo: com.shinobisondre.stockanalyzer.data.Repository) {
+    private suspend fun quickWinCheck(repo: com.shinobisondre.stockanalyzer.data.Repository, onlyOthers: Boolean = false) {
         val items = repo.serverQuickWins() ?: return
         repo.recordQuick(items)
         val prefs = applicationContext.getSharedPreferences("quickwins", Context.MODE_PRIVATE)
@@ -261,7 +264,7 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         fun call(w: com.shinobisondre.stockanalyzer.data.QuickWin) =
             com.shinobisondre.stockanalyzer.engine.DayAfter.plain(w.advice, w.owned, w.costPct, if (w.sessionOpen) w.closeLocal else null)
         // Yours and your watchlist always; other stocks only when they're worth buying.
-        val fresh = items.filter { it.symbol !in seen && (it.owned || it.watched || call(it).tone == com.shinobisondre.stockanalyzer.engine.Tone.BUY) }
+        val fresh = items.filter { it.symbol !in seen && if (onlyOthers) !(it.owned || it.watched) && call(it).tone == com.shinobisondre.stockanalyzer.engine.Tone.BUY else (it.owned || it.watched || call(it).tone == com.shinobisondre.stockanalyzer.engine.Tone.BUY) }
             .sortedWith(compareByDescending<com.shinobisondre.stockanalyzer.data.QuickWin> { it.owned }.thenByDescending { it.changePct }).take(4)
         if (fresh.isEmpty()) return
         prefs.edit().putString("seen", (seen + fresh.map { it.symbol }).joinToString(",") { "$day:$it" }).apply()

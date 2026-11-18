@@ -1,5 +1,6 @@
 package com.shinobisondre.stockanalyzer.ui.screens
 
+import kotlinx.coroutines.launch
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.horizontalScroll
@@ -34,6 +35,29 @@ import com.shinobisondre.stockanalyzer.ui.MainViewModel
 import com.shinobisondre.stockanalyzer.ui.SectionCard
 import com.shinobisondre.stockanalyzer.ui.theme.Palette
 import com.shinobisondre.stockanalyzer.work.Notifier
+
+@Composable
+private fun InstantAlertsRow() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var status by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(com.shinobisondre.stockanalyzer.push.Push.status(ctx)) }
+    var note by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    Column(Modifier.padding(vertical = 6.dp)) {
+        Text("Instant alerts", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Text(status, fontSize = 12.sp, color = Palette.muted)
+        if (com.shinobisondre.stockanalyzer.push.Push.available(ctx)) {
+            OutlinedButton(onClick = {
+                note = "Sending… leave the app now — it arrives in about 7 seconds."
+                scope.launch {
+                    val ok = com.shinobisondre.stockanalyzer.push.Push.test(ctx)
+                    status = com.shinobisondre.stockanalyzer.push.Push.status(ctx)
+                    if (!ok) note = "Couldn't reach the server. Check your connection and try again."
+                }
+            }, modifier = Modifier.padding(top = 4.dp)) { Text("Send a test notification") }
+            note?.let { Text(it, fontSize = 12.sp, color = Palette.muted) }
+        }
+    }
+}
 
 @Composable
 private fun ToggleRow(title: String, body: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
@@ -96,6 +120,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(3.0, 5.0, 8.0).forEach { p -> SmallChip("±${p.toInt()}%", s.bigMovePct == p) { vm.settings { it.copy(bigMovePct = p) } } }
                 }
+                InstantAlertsRow()
                 ToggleRow("Call changes & new setups", "Bullish ↔ hold ↔ bearish on completed daily bars", s.notifyCalls) { v -> vm.settings { it.copy(notifyCalls = v) } }
                 ToggleRow("Big moves", "Once per stock per day", s.notifyMoves) { v -> vm.settings { it.copy(notifyMoves = v) } }
                 ToggleRow("Tyler 3/4-stacks", null, s.notifyStacks) { v -> vm.settings { it.copy(notifyStacks = v) } }

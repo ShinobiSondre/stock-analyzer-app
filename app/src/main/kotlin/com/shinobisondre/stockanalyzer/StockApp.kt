@@ -6,6 +6,11 @@ import com.shinobisondre.stockanalyzer.data.Store
 import com.shinobisondre.stockanalyzer.work.AlertWorker
 import com.shinobisondre.stockanalyzer.work.Notifier
 
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
 class StockApp : Application() {
     lateinit var store: Store
         private set
@@ -25,5 +30,12 @@ class StockApp : Application() {
             .setPoTokenProvider(com.shinobisondre.stockanalyzer.potoken.PoTokenProviderImpl)
         val s = store.value.settings
         runCatching { AlertWorker.schedule(this, s.alertsEnabled, s.alertIntervalMin) }
+        // Keep the instant-alerts server in step with your stocks and alert settings.
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            store.state.map { st -> Triple(st.holdings.map { it.symbol }, st.watchlist, st.settings) }
+                .distinctUntilChanged().debounce(4000)
+                .collect { runCatching { com.shinobisondre.stockanalyzer.push.Push.register(this@StockApp) } }
+        }
     }
 }
