@@ -10,16 +10,16 @@ Write-Host "Node: $(node --version 2>&1)"
 if (-not (Test-Path $Key)) { throw "Firebase key file not found: $Key" }
 
 Write-Host "1/4 Logging in to Cloudflare (a browser window may open)..."
-$who = (npx --yes wrangler@latest whoami 2>&1) -join "`n"
+$who = (npx --yes wrangler@latest whoami 2>&1) -join "`n"; Write-Host $who
 if ($who -match "not authenticated|Failed|wrangler login") {
   Write-Host "Please click 'Allow' in the browser window that opens." -ForegroundColor Yellow
-  npx --yes wrangler@latest login
+  npx --yes wrangler@latest login 2>&1 | Out-Host
 }
 
 Write-Host "2/4 Creating the storage for alert state..."
 $toml = Get-Content wrangler.toml -Raw
 if ($toml -match "REPLACE_WITH_KV_ID") {
-  $out = (npx --yes wrangler@latest kv namespace create STATE 2>&1) -join "`n"
+  $out = (npx --yes wrangler@latest kv namespace create STATE 2>&1) -join "`n"; Write-Host $out
   if ($out -notmatch '"?id"?\s*[=:]\s*"([0-9a-f]{32})"') {
     $list = (npx --yes wrangler@latest kv namespace list) -join "`n"
     if ($list -match '"id":\s*"([0-9a-f]{32})",\s*"title":\s*"[^"]*STATE') { $id = $Matches[1] } else { Write-Host $out; throw "Couldn't create the KV namespace" }
@@ -28,7 +28,7 @@ if ($toml -match "REPLACE_WITH_KV_ID") {
 }
 
 Write-Host "3/4 Storing the Firebase key as a secret..."
-Get-Content $Key -Raw | npx --yes wrangler@latest secret put FCM_SERVICE_ACCOUNT
+Get-Content $Key -Raw | npx --yes wrangler@latest secret put FCM_SERVICE_ACCOUNT 2>&1 | Out-Host
 
 Write-Host "4/4 Deploying..."
 $dep = (npx --yes wrangler@latest deploy 2>&1) -join "`n"
