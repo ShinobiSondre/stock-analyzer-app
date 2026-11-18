@@ -3,6 +3,8 @@ package com.shinobisondre.stockanalyzer.ui.screens
 import kotlinx.coroutines.launch
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
