@@ -27,12 +27,12 @@ if ($toml -match "REPLACE_WITH_KV_ID") {
   ($toml -replace "REPLACE_WITH_KV_ID", $id) | Set-Content wrangler.toml -NoNewline
 }
 
-Write-Host "3/4 Storing the Firebase key as a secret..."
-Get-Content $Key -Raw | npx --yes wrangler@latest secret put FCM_SERVICE_ACCOUNT 2>&1 | Out-Host
-
-Write-Host "4/4 Deploying..."
+Write-Host "3/4 Deploying..."
 $dep = (npx --yes wrangler@latest deploy 2>&1) -join "`n"
 Write-Host $dep
+Write-Host "4/4 Storing the Firebase key as a secret..."
+Get-Content $Key -Raw | npx --yes wrangler@latest secret put FCM_SERVICE_ACCOUNT 2>&1 | Out-Host
+
 if ($dep -match '(https://stock-alerts\.[a-z0-9-]+\.workers\.dev)') {
   Write-Host ""
   Write-Host "Done! Server URL: $($Matches[1])" -ForegroundColor Green
