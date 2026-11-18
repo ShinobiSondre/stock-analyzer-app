@@ -52,6 +52,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import com.shinobisondre.stockanalyzer.engine.Checked
+import com.shinobisondre.stockanalyzer.engine.Guess
+import com.shinobisondre.stockanalyzer.engine.GuessKind
+import com.shinobisondre.stockanalyzer.engine.Outlook
+import com.shinobisondre.stockanalyzer.engine.RangeForecast
+import com.shinobisondre.stockanalyzer.engine.Scoreboard
+import com.shinobisondre.stockanalyzer.engine.Scorecard
 
 data class MarketData(
     val series: MarketSeries,
@@ -74,7 +81,13 @@ class Core(val symbol: String, val chart: ChartResult, val analysis: Analysis) {
     val isUsListing get() = !symbol.contains('.') || symbol.endsWith(".US")
 }
 
-class Extras(val summary: SummaryData?, val quality: QualityScore?, val quote: QuoteExtra?, val news: NewsDigest?)
+class Extras(val summary: SummaryData?, val quality: QualityScore?, val quote: QuoteExtra?, val news: NewsDigest?, val ranges: List<RangeForecast> = emptyList())
+
+/** Everything the app said (picks, quick wins, lows & highs), next to what actually happened. */
+class ScoreView(val board: Scoreboard, val items: List<Checked>, val saved: Int, val at: Long = System.currentTimeMillis())
+
+/** One lock for guesses.json, shared by the app and the background worker. */
+private val guessLock = Mutex()
 
 class HoldingView(val holding: Holding, val core: Core?, val value: PositionValue, val forecast: HorizonForecast?, val error: String?)
 
@@ -227,7 +240,11 @@ class Repository(private val context: Context, val store: Store) {
         val s = sum.await()
         val quality = s?.fundamentals?.let { f -> Quality.score(f.copy(price = f.price ?: core.price)) }
         val news = News.digest(core.symbol, core.name, yNews.await(), gNews.await(), core.changePct)
-        Extras(s, quality, quote.await(), news)
+        val now = System.currentTimeMillis() / 1000
+        val heads = news?.items.orEmpty().map { NewsHeadline(it.title, it.sentiment.coerceIn(-1, 1), Picks.ageHours(it.timeSec, now)) }
+        val ranges = withContext(Dispatchers.Default) { runCatching { Outlook.forecast(core.analysis, heads, s?.catalysts?.daysToEarnings) }.getOrDefault(emptyList()) }
+        recordRanges(core, ranges)
+        Extras(s, quality, quote.await(), news, ranges)
     }
 
     suspend fun fxRate(fromRaw: String?, to: String): Double? {
@@ -493,10 +510,11 @@ class Repository(private val context: Context, val store: Store) {
         val detailed = top.map { q -> async { quickWin(q.symbol, q.owned, q.watched, intraday = true) ?: q } }.map { it.await() }.associateBy { it.symbol }
         firstPass.map { detailed[it.symbol] ?: it }
             .sortedWith(compareByDescending<QuickWin> { it.owned }.thenByDescending { it.watched }.thenByDescending { it.changePct })
+            .also { recordQuick(it) }
     }
 
     // ── Picks ────────────────────────────────────────────────────────────────
-    class PickView(val pick: Pick, val price: Double?, val currency: String, val changePct: Double?, val owned: Boolean)
+    class PickView(val pick: Pick, val price: Double?, val currency: String, val changePct: Double?, val owned: Boolean, val ranges: List<RangeForecast> = emptyList())
 
     /** Full read for one stock: chart + model, company facts, analysts, earnings date and the latest headlines. */
     suspend fun pickFor(symbol: String): PickView? = coroutineScope {
@@ -509,7 +527,14 @@ class Repository(private val context: Context, val store: Store) {
         val cat = s?.catalysts
         val p = Picks.evaluate(symbol, core.name, s?.fundamentals, core.analysis, heads,
             PickExtras(cat?.daysToEarnings, cat?.upgrades30d ?: 0, cat?.downgrades30d ?: 0))
-        PickView(p, core.price, core.currency, core.changePct, store.value.holdings.any { it.symbol == symbol })
+        val ranges = runCatching { Outlook.forecast(core.analysis, heads, cat?.daysToEarnings) }.getOrDefault(emptyList())
+        val a = core.analysis
+        val expect = when (p.tier) { com.shinobisondre.stockanalyzer.engine.PickTier.BUY -> 1; com.shinobisondre.stockanalyzer.engine.PickTier.AVOID -> -1; else -> 0 }
+        val why = p.reasons.firstOrNull { it.good != null }?.text ?: ""
+        recordGuesses(listOf(Guess(GuessKind.PICK, symbol, core.name, a.lastDate, System.currentTimeMillis(), core.price ?: a.lastClose,
+            p.tier.title, expect, 22, why)))
+        recordRanges(core, ranges)
+        PickView(p, core.price, core.currency, core.changePct, store.value.holdings.any { it.symbol == symbol }, ranges)
     }
 
     suspend fun picks(symbols: List<String>, onProgress: (Int, Int) -> Unit): List<PickView> = coroutineScope {
@@ -628,5 +653,66 @@ class Repository(private val context: Context, val store: Store) {
         } + bySym.filterKeys { it !in symbols }.values.flatten().map { GradedCall(it, null, null, null) }
         val recent = graded.sortedByDescending { it.logged.date }.filter { it.logged.date < today || it.ret5 != null }.take(80)
         return TrackView(TrackRecord.summarize(graded), recent, bySym.size)
+    }
+
+    // ── Scorecard: what the app said, checked against what happened ─────────
+    private val guessFile = java.io.File(context.filesDir, "guesses.json")
+
+    private fun readGuesses(): List<Guess> = runCatching {
+        MiniJson.parse(guessFile.readText()).obj()["items"].list().mapNotNull { Guess.fromMap(it.obj()) }
+    }.getOrDefault(emptyList())
+
+    suspend fun guesses(): List<Guess> = guessLock.withLock { withContext(Dispatchers.IO) { readGuesses() } }
+
+    /** Saves new guesses (only the first one per kind, stock and day is kept). */
+    suspend fun recordGuesses(new: List<Guess>) {
+        if (new.isEmpty()) return
+        runCatching {
+            guessLock.withLock {
+                withContext(Dispatchers.IO) {
+                    val old = readGuesses()
+                    val all = Scorecard.add(old, new)
+                    if (all.size == old.size) return@withContext
+                    val tmp = java.io.File(guessFile.parentFile, "guesses.json.tmp")
+                    tmp.writeText(MiniJson.write(linkedMapOf("items" to all.map { it.toMap() })))
+                    tmp.renameTo(guessFile)
+                }
+            }
+        }
+    }
+
+    private suspend fun recordRanges(core: Core, ranges: List<RangeForecast>) {
+        val a = core.analysis
+        recordGuesses(ranges.map { r ->
+            Guess(GuessKind.RANGE, core.symbol, core.name, a.lastDate, System.currentTimeMillis(), r.price, r.label, 0, r.days,
+                likelyLow = r.likelyLow, likelyHigh = r.likelyHigh, wideLow = r.wideLow, wideHigh = r.wideHigh)
+        })
+    }
+
+    /** Quick-win calls made while the market is open (that day's close is what they're measured from). */
+    suspend fun recordQuick(items: List<QuickWin>) {
+        val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
+        recordGuesses(items.filter { it.sessionOpen && it.price != null }.map { w ->
+            val c = DayAfter.plain(w.advice, w.owned, w.costPct, w.closeLocal)
+            val expect = when (c.tone) { com.shinobisondre.stockanalyzer.engine.Tone.BUY -> 1; com.shinobisondre.stockanalyzer.engine.Tone.SELL -> -1; else -> 0 }
+            Guess(GuessKind.QUICK, w.symbol, w.name, today, System.currentTimeMillis(), w.price!!, c.action, expect, 1,
+                "Up ${"%.1f".format(java.util.Locale.US, w.changePct)}% that day. ${c.because}")
+        })
+    }
+
+    /** Checks every saved guess against the daily prices since. */
+    suspend fun scorecard(): ScoreView = coroutineScope {
+        val all = guesses()
+        val bySym = all.groupBy { it.symbol }
+        val checked = bySym.map { (sym, list) ->
+            async {
+                val series = runCatching { Series(chart(sym, 30 * 60_000L).completedCandles()) }.getOrNull()
+                list.map { g ->
+                    if (series != null) withContext(Dispatchers.Default) { Scorecard.check(g, series) }
+                    else Checked(g, false, 0, null, null, null, null, null, "Couldn't load prices.")
+                }
+            }
+        }.flatMap { it.await() }.sortedByDescending { it.guess.madeAt }
+        ScoreView(Scorecard.board(checked), checked, all.size)
     }
 }

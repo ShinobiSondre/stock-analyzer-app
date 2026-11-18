@@ -71,6 +71,7 @@ fun PicksScreen(vm: MainViewModel) {
             Text("Not quick wins: these are for holding a few months. Each stock is scored on the business (profits, growth, price vs profits, debt), what analysts say, the measured odds, Tyler Hill's checklists and the latest news.",
                 color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
         }
+        full { ScoreTeaser(vm, com.shinobisondre.stockanalyzer.engine.GuessKind.PICK, Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) }
         if (p.running) full {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("Checking ${p.done} of ${p.total} stocks — company facts, analysts, odds and news…", color = Palette.muted, fontSize = 13.sp)
@@ -141,6 +142,9 @@ fun PickCard(vm: MainViewModel, v: Repository.PickView, modifier: Modifier = Mod
                 Text(mark, color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.width(20.dp))
                 Text(r.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
             }
+        }
+        rangeLine(v.ranges.firstOrNull(), v.currency)?.let {
+            Text(it, fontSize = 12.sp, color = Palette.muted, modifier = Modifier.padding(top = 8.dp))
         }
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(8.dp).clip(RoundedCornerShape(50)).background(toneColor(pk.tier.tone)))

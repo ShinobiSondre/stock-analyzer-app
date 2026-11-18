@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
@@ -91,6 +92,7 @@ private fun Tab.icon(): ImageVector = when (this) {
     Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.BoltIcon
     Tab.TYLER -> Icons.Filled.PlayArrow
     Tab.RIPPLE -> Icons.Filled.Share
+    Tab.SCORE -> Icons.Filled.CheckCircle
     Tab.PICKS -> Icons.Filled.Star
     Tab.SCANNER -> Icons.Filled.Search
     Tab.PORTFOLIO -> Icons.Filled.AccountBox
@@ -271,6 +273,7 @@ fun TabContent(vm: MainViewModel, tab: Tab, twoPane: Boolean) {
         Tab.MARKETS -> MarketsScreen(vm)
         Tab.QUICK -> com.shinobisondre.stockanalyzer.ui.screens.QuickWinsScreen(vm)
         Tab.RIPPLE -> com.shinobisondre.stockanalyzer.ui.screens.RippleScreen(vm)
+        Tab.SCORE -> com.shinobisondre.stockanalyzer.ui.screens.ScorecardScreen(vm)
         Tab.PICKS -> com.shinobisondre.stockanalyzer.ui.screens.PicksScreen(vm)
         Tab.TYLER -> com.shinobisondre.stockanalyzer.ui.screens.TylerScreen(vm)
         Tab.SCANNER -> ScannerScreen(vm)

@@ -91,6 +91,7 @@ fun QuickWinsScreen(vm: MainViewModel) {
                 SmallChip("Whole market", q.includeMarket) { vm.setQuickMarket(true) }
             }
         }
+        full { ScoreTeaser(vm, com.shinobisondre.stockanalyzer.engine.GuessKind.QUICK, Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) }
         if (q.running) full {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text(if (q.total > 0) "Checking ${q.done} of ${q.total} stocks…" else "Finding today's movers…", color = Palette.muted, fontSize = 13.sp)

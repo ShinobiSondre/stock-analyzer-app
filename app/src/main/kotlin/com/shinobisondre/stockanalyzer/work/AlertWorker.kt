@@ -123,6 +123,12 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         // Also keep watching stocks with an open "sell now" signal, so the "buy back" can come even after you sold.
         val symbols = (st.holdings.map { it.symbol } + st.watchlist + st.watch.filterValues { it.sellSignalPrice != null }.keys).distinct().take(45)
         val owned = st.holdings.map { it.symbol }.toSet()
+        // The week's predicted lows/highs saved in the last few days (for "it dipped to the likely low" alerts).
+        val weekRanges = runCatching { repo.guesses() }.getOrDefault(emptyList())
+            .filter { it.kind == com.shinobisondre.stockanalyzer.engine.GuessKind.RANGE && it.days == 5 && System.currentTimeMillis() - it.madeAt < 7 * 86_400_000L }
+            .groupBy { it.symbol }.mapValues { (_, v) -> v.maxBy { it.madeAt } }
+        val rangePrefs = applicationContext.getSharedPreferences("rangeAlerts", Context.MODE_PRIVATE)
+        val rangeSeen = rangePrefs.getStringSet("seen", emptySet())!!.toMutableSet()
         for (sym in symbols) {
             val core = runCatching { repo.analyze(sym, force = true) }.getOrNull() ?: continue
             val completed = core.chart.completedCandles()
@@ -184,8 +190,22 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
                 newAlerts += alert(sym, "move", "$sym $dir ${"%.1f".format(abs(chg))}% today", body)
                 next = next.copy(moveAlertDate = today)
             }
+            // Predicted low/high reached (once per prediction): a buy zone for watched stocks, a take-profit zone for yours.
+            val rg = weekRanges[sym]; val px = core.price
+            if (settings.notifySwing && rg != null && px != null && core.chart.meta.sessionOpen()) {
+                val n = sym.removeSuffix(".OL")
+                if (rg.likelyLow != null && px <= rg.likelyLow && rangeSeen.add("${rg.key}|low"))
+                    newAlerts += alert(sym, "range", "$n dipped to its likely low",
+                        "Now ${"%.2f".format(px)} — the app expected a dip to about ${"%.2f".format(rg.likelyLow)} this week" +
+                            (rg.wideLow?.let { " (only 1 in 10 weeks it goes below ${"%.2f".format(it)})" } ?: "") + ". " +
+                            if (sym in owned) "If you were thinking of adding more, this is the cheaper zone it predicted." else "If you wanted to buy, this is the cheaper zone it predicted.")
+                if (sym in owned && rg.likelyHigh != null && px >= rg.likelyHigh && rangeSeen.add("${rg.key}|high"))
+                    newAlerts += alert(sym, "range", "$n reached its likely high",
+                        "Now ${"%.2f".format(px)} — about as high as the app expected this week (${"%.2f".format(rg.likelyHigh)}). A realistic point to take some profit if you want to; it goes past this about half the time.")
+            }
             watch[sym] = next
         }
+        rangePrefs.edit().putStringSet("seen", rangeSeen.toList().takeLast(300).toSet()).apply()
 
         store.update { s ->
             s.copy(
@@ -233,6 +253,7 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
 
     private suspend fun quickWinCheck(repo: com.shinobisondre.stockanalyzer.data.Repository) {
         val items = repo.serverQuickWins() ?: return
+        repo.recordQuick(items)
         val prefs = applicationContext.getSharedPreferences("quickwins", Context.MODE_PRIVATE)
         val day = java.time.LocalDate.now().toString()
         val seen = prefs.getString("seen", "")!!.split(',').filter { it.startsWith("$day:") }.map { it.substringAfter(':') }.toSet()

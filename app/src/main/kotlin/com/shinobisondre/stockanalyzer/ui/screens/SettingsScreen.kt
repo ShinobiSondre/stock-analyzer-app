@@ -101,7 +101,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 ToggleRow("Tyler 3/4-stacks", null, s.notifyStacks) { v -> vm.settings { it.copy(notifyStacks = v) } }
                 ToggleRow("Market regime", "Bull/caution/bear changes and S&P 500 death cross", s.notifyMarket) { v -> vm.settings { it.copy(notifyMarket = v) } }
                 ToggleRow("Quick wins", "Your stocks jumping 3%+ and stocks worth buying — from a server scan every 15 min, so it barely uses battery", s.notifyQuickWins) { v -> vm.settings { it.copy(notifyQuickWins = v) } }
-                ToggleRow("Sell now / buy back", "When a stock you own looks overheated (sell), and later when it looks good again (buy back)", s.notifySwing) { v -> vm.settings { it.copy(notifySwing = v) } }
+                ToggleRow("Sell now / buy back", "When a stock you own looks overheated (sell), when it looks good again (buy back), and when a stock dips to its predicted low or reaches its predicted high", s.notifySwing) { v -> vm.settings { it.copy(notifySwing = v) } }
                 ToggleRow("Breaking news on your stocks", "New headlines that sound clearly good or bad, checked each time the watcher runs", s.notifyNews) { v -> vm.settings { it.copy(notifyNews = v) } }
                 ToggleRow("New Tyler Hill videos", "What he expects, summarised, when he posts", s.notifyTyler) { v -> vm.settings { it.copy(notifyTyler = v) } }
                 if (!Notifier.canPost(ctx)) {

@@ -164,6 +164,7 @@ fun MarketsScreen(vm: MainViewModel) {
                     androidx.compose.material3.OutlinedButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.SCANNER }, modifier = Modifier.weight(1f)) { Text("Best odds now") }
                     androidx.compose.material3.OutlinedButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.RIPPLE }, modifier = Modifier.weight(1f)) { Text("What moves together") }
                 }
+                androidx.compose.material3.OutlinedButton(onClick = { vm.tab.value = com.shinobisondre.stockanalyzer.ui.Tab.SCORE }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Scorecard: was the app right?") }
             }
         }
         full {

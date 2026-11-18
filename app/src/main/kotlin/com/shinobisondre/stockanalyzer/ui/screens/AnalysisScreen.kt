@@ -177,6 +177,7 @@ private fun CardsGrid(vm: MainViewModel, core: Core, extras: Load<Extras>?, call
             item(key = "price", span = StaggeredGridItemSpan.FullLine) { PriceHeader(core, (extras as? Load.Ok)?.v) }
             item(key = "verdict", span = StaggeredGridItemSpan.FullLine) { VerdictCard(core) }
             if (includeChart) item(key = "chart", span = StaggeredGridItemSpan.FullLine) { chart() }
+            ((extras as? Load.Ok)?.v?.ranges)?.takeIf { it.isNotEmpty() }?.let { rs -> item(key = "range") { RangeCard(rs, core.currency) } }
             item(key = "drivers") { DriversCard(a) }
             if (a.rules.setups.isNotEmpty()) item(key = "setups") { SetupsCard(a) }
             a.holding?.let { h -> item(key = "hold") { HoldingCard(h) } }

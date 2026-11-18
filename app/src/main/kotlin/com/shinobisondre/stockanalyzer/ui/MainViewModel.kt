@@ -40,7 +40,7 @@ fun <T> Load<T>.value(): T? = (this as? Load.Ok<T>)?.v
 enum class Tab(val label: String, val inBottomBar: Boolean = true) {
     MARKETS("Home"), PICKS("Picks"), QUICK("Quick wins"), PORTFOLIO("Portfolio"), TYLER("Tyler"),
     // Reached from the home page on the narrow screen; in the side rail when unfolded.
-    RIPPLE("Ripples", false), SCANNER("Scanner", false), ALERTS("Alerts", false), SETTINGS("Settings", false),
+    RIPPLE("Ripples", false), SCORE("Scorecard", false), SCANNER("Scanner", false), ALERTS("Alerts", false), SETTINGS("Settings", false),
 }
 
 data class PicksState(
@@ -141,6 +141,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val portfolio = MutableStateFlow<Load<PortfolioView>>(Load.Idle)
     val horizon = MutableStateFlow(10)
     val track = MutableStateFlow<Load<TrackView>>(Load.Idle)
+    /** Picks, quick wins and lows/highs the app made, checked against what happened. */
+    val score = MutableStateFlow<Load<com.shinobisondre.stockanalyzer.data.ScoreView>>(Load.Idle)
     val update = MutableStateFlow(UpdateState())
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val quick = MutableStateFlow(QuickState())
@@ -557,6 +559,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ── Alerts / track record ────────────────────────────────────────────────
     fun markAlertsRead() = repo.store.updateAsync { st -> st.copy(alerts = st.alerts.map { it.copy(read = true) }) }
     fun clearAlerts() = repo.store.updateAsync { st -> st.copy(alerts = emptyList()) }
+
+    fun loadScore(force: Boolean = false) {
+        val cur = score.value
+        if (cur is Load.Loading) return
+        if (!force && cur is Load.Ok && System.currentTimeMillis() - cur.v.at < 15 * 60_000) return
+        if (cur !is Load.Ok) score.value = Load.Loading
+        viewModelScope.launch { score.value = runCatching { repo.scorecard() }.fold({ Load.Ok(it) }, { Load.Err(it.message ?: "Failed") }) }
+    }
 
     fun loadTrack() {
         track.value = Load.Loading

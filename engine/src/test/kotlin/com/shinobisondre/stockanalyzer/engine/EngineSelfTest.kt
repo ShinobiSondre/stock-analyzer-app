@@ -37,6 +37,7 @@ object EngineSelfTest {
         ripple()
         nordnetNotes()
         picks()
+        outlookAndScorecard()
         println("EngineSelfTest: $passed checks passed, ${failures.size} failed")
         failures.forEach { println("  FAIL $it") }
         return failures.toList()
@@ -486,6 +487,42 @@ object EngineSelfTest {
         // Swing: no buy-back while it's still a falling knife or bearish; a 10% drop with nothing bad is a buy-back.
         val bb = Swing.buyBack(a, a.lastClose * 1.2)
         check("swing buyback", a.verdict.call.bearish || bb != null) { "${a.verdict.call}" }
+    }
+
+    private fun outlookAndScorecard() {
+        val c = synthetic(520)
+        val a = Analyzer.analyze("TEST", c, market(600), dummyModel())!!
+        val r = Outlook.forecast(a, listOf(NewsHeadline("TEST beats", 1, 2.0)), daysToEarnings = 3)
+        check("outlook horizons", r.size == 2) { "${r.size}" }
+        val w = r.first()
+        check("outlook order", w.wideLow <= w.likelyLow && w.likelyLow <= w.price && w.price <= w.likelyHigh && w.likelyHigh <= w.wideHigh) { "$w" }
+        check("outlook month wider", r[1].wideHigh - r[1].wideLow > w.wideHigh - w.wideLow)
+        check("outlook earnings", w.earningsInside && w.lines.any { it.text.contains("earnings") })
+        check("outlook oos", w.pastLowHit != null && w.pastLowHit!! in 0.2..0.8) { "${w.pastLowHit}" }
+        val plain = Outlook.forecast(a)
+        check("outlook earnings widens", w.wideHigh / w.wideLow > plain[0].wideHigh / plain[0].wideLow)
+
+        // Scorecard on the first 400 bars, checked against the rest.
+        val s = Series(c)
+        val d = c[400].date; val p = c[400].close
+        val buy = Guess(GuessKind.PICK, "T", "T", d, 0, p, "Good to buy", 1, 22)
+        val cb = Scorecard.check(buy, s)
+        val up = c[422].close > p
+        check("pick graded", cb.done && cb.right == up && cb.text.startsWith(if (up) "Right" else "Wrong")) { cb.text }
+        val early = Scorecard.check(buy.copy(date = c[510].date, price = c[510].close), s)
+        check("pick pending", !early.done && early.right == null && early.text.startsWith("So far")) { early.text }
+        val q = Scorecard.check(Guess(GuessKind.QUICK, "T", "T", d, 0, p, "Sell before 22:00 today", -1, 1), s)
+        check("quick graded", q.done && q.right == (c[401].close < c[400].close))
+        val rg = Guess(GuessKind.RANGE, "T", "T", d, 0, p, "Next week", 0, 5, likelyLow = p * 0.98, likelyHigh = p * 1.02, wideLow = p * 0.5, wideHigh = p * 2.0)
+        val cr = Scorecard.check(rg, s)
+        check("range graded", cr.done && cr.right == true && cr.lowSeen!! <= cr.highSeen!!) { cr.text }
+        val list = Scorecard.add(emptyList(), listOf(buy, buy.copy(madeAt = 5, label = "later"), rg))
+        check("scorecard dedupe", list.size == 2 && list.first { it.kind == GuessKind.PICK }.label == "Good to buy")
+        val back = Guess.fromMap(MiniJson.parse(MiniJson.write(rg.toMap())).obj())
+        check("guess roundtrip", back == rg) { "$back" }
+        val board = Scorecard.board(listOf(cb, q, cr, early))
+        check("board", board.lines[GuessKind.PICK]?.single()?.n == 1 && board.waiting[GuessKind.PICK] == 1 &&
+            board.lines[GuessKind.RANGE]?.single()?.text?.contains("aim 80%") == true) { "$board" }
     }
 
     private fun nok(s: String) = s.replace(" ", "").replace(',', '.').toDouble()
