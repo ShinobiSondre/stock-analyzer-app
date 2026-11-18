@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "694327842714",
+    "project_id": "holmstead-959ed",
+    "storage_bucket": "holmstead-959ed.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:694327842714:android:2df71494f1c61a68d14c23",
+        "android_client_info": {
+          "package_name": "com.shinobisondre.stockanalyzer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBKgIWIBoZ0nVINpUucKrkdeR9X66Geayo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:694327842714:android:07debcaea84ed015d14c23",
+        "android_client_info": {
+          "package_name": "no.sondre.holmstead"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBKgIWIBoZ0nVINpUucKrkdeR9X66Geayo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

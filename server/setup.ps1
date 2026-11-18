@@ -1,8 +1,8 @@
 # One-time setup of the instant-alerts server on Cloudflare (free), from Windows PowerShell.
 #   cd stock-analyzer-app\server
-#   powershell -ExecutionPolicy Bypass -File setup.ps1 -Key "$HOME\Downloads\<firebase-key>.json"
+#   powershell -ExecutionPolicy Bypass -File setup.ps1        (uses fcm-key.json next to this script)
 # Needs Node.js. Opens the browser once to log in to Cloudflare (the same account as Holmstead).
-param([Parameter(Mandatory = $true)][string]$Key)
+param([string]$Key = "$PSScriptRoot\fcm-key.json")
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 if (-not (Test-Path $Key)) { throw "Firebase key file not found: $Key" }
