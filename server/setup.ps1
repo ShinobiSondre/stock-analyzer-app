@@ -3,13 +3,16 @@
 #   powershell -ExecutionPolicy Bypass -File setup.ps1        (uses fcm-key.json next to this script)
 # Needs Node.js. Opens the browser once to log in to Cloudflare (the same account as Holmstead).
 param([string]$Key = "$PSScriptRoot\fcm-key.json")
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot
 if (-not (Test-Path $Key)) { throw "Firebase key file not found: $Key" }
 
 Write-Host "1/4 Logging in to Cloudflare (a browser window may open)..."
-npx --yes wrangler@latest whoami 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) { npx --yes wrangler@latest login }
+$who = (npx --yes wrangler@latest whoami 2>&1) -join "`n"
+if ($who -match "not authenticated|Failed|wrangler login") {
+  Write-Host "Please click 'Allow' in the browser window that opens." -ForegroundColor Yellow
+  npx --yes wrangler@latest login
+}
 
 Write-Host "2/4 Creating the storage for alert state..."
 $toml = Get-Content wrangler.toml -Raw
@@ -32,4 +35,4 @@ if ($dep -match '(https://stock-alerts\.[a-z0-9-]+\.workers\.dev)') {
   Write-Host ""
   Write-Host "Done! Server URL: $($Matches[1])" -ForegroundColor Green
   Write-Host "Send this URL and app\google-services.json to Claude."
-} else { Write-Host "Deploy finished — look for the workers.dev URL above." }
+} else { Write-Host "Deploy finished - look for the workers.dev URL above." }
