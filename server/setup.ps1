@@ -5,6 +5,8 @@
 param([string]$Key = "$PSScriptRoot\fcm-key.json")
 $ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot
+Start-Transcript -Path "$PSScriptRoot\setup.log" -Force | Out-Null
+Write-Host "Node: $(node --version 2>&1)"
 if (-not (Test-Path $Key)) { throw "Firebase key file not found: $Key" }
 
 Write-Host "1/4 Logging in to Cloudflare (a browser window may open)..."
@@ -36,3 +38,4 @@ if ($dep -match '(https://stock-alerts\.[a-z0-9-]+\.workers\.dev)') {
   Write-Host "Done! Server URL: $($Matches[1])" -ForegroundColor Green
   Write-Host "Send this URL and app\google-services.json to Claude."
 } else { Write-Host "Deploy finished - look for the workers.dev URL above." }
+Stop-Transcript | Out-Null
