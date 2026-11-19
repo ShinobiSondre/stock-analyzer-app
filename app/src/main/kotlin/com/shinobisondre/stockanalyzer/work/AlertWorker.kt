@@ -33,14 +33,17 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 object Notifier {
-    const val CH_ALERTS = "alerts"
+    const val CH_ALERTS = "alerts_hi"
     const val CH_UPDATES = "updates"
 
     fun createChannels(ctx: Context) {
         if (Build.VERSION.SDK_INT < 26) return
         val nm = ctx.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CH_ALERTS, "Stock alerts", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            description = "Call changes, big moves, 4-stack signals and market regime changes for your portfolio and watchlist"
+        // High importance so alerts pop up over whatever you're doing (the old "alerts" channel was quieter).
+        runCatching { nm.deleteNotificationChannel("alerts") }
+        nm.createNotificationChannel(NotificationChannel(CH_ALERTS, "Stock alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Big moves, predicted lows/highs, news, quick wins and call changes for your portfolio and watchlist"
+            enableVibration(true)
         })
         nm.createNotificationChannel(NotificationChannel(CH_UPDATES, "App updates", NotificationManager.IMPORTANCE_LOW))
     }
@@ -66,6 +69,8 @@ object Notifier {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             symbol?.let { putExtra(MainActivity.EXTRA_SYMBOL, it) }
             tab?.let { putExtra(MainActivity.EXTRA_TAB, it) }
+            // Opening the app from an alert shows it as a full-screen splash.
+            if (channel == CH_ALERTS) { putExtra("title", title); putExtra("body", text) }
             if (channel == CH_UPDATES) putExtra(MainActivity.EXTRA_UPDATE, true)
         }
         val pi = PendingIntent.getActivity(ctx, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -74,6 +79,8 @@ object Notifier {
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(if (channel == CH_ALERTS) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .setContentIntent(pi)
             .setAutoCancel(true)
             .build()

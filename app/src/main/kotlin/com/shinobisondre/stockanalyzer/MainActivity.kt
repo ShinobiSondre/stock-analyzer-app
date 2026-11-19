@@ -86,6 +86,13 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        val alertTitle = intent.getStringExtra("title")
+        if (alertTitle != null) {
+            vm.showAlert(com.shinobisondre.stockanalyzer.push.AlertSplash(alertTitle, intent.getStringExtra("body") ?: "",
+                intent.getStringExtra(EXTRA_SYMBOL), intent.getStringExtra(EXTRA_TAB)))
+            intent.removeExtra("title")
+            return
+        }
         intent.getStringExtra(EXTRA_SYMBOL)?.let { vm.open(it) }
         intent.getStringExtra(EXTRA_TAB)?.let { name -> Tab.entries.firstOrNull { it.name == name } }?.let { vm.close(); vm.tab.value = it }
         // Nordnet's transaction export (PDF) shared to the app: import the trades.

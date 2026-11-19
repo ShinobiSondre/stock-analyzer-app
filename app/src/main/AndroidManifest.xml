@@ -52,7 +52,7 @@
         <service android:name=".push.PushService" android:exported="false">
             <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
         </service>
-        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="alerts" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="alerts_hi" />
         <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_notification" />
         <receiver android:name=".update.PackageReplacedReceiver" android:exported="false">
             <intent-filter>

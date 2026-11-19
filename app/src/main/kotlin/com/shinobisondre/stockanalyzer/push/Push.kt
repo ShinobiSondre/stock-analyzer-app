@@ -29,7 +29,12 @@ import kotlin.coroutines.resume
  * headlines and the Quick wins scan every minute and pushes a notification — even when the
  * app is closed, without the phone polling.
  */
+/** An alert to show as a full-screen splash. */
+data class AlertSplash(val title: String, val body: String, val symbol: String?, val tab: String?)
+
 object Push {
+    /** Alerts that arrive while the app is open: shown as a splash right away. */
+    val incoming = kotlinx.coroutines.flow.MutableSharedFlow<AlertSplash>(extraBufferCapacity = 8)
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("push", Context.MODE_PRIVATE)
 
@@ -120,5 +125,6 @@ class PushService : FirebaseMessagingService() {
         val title = d["title"] ?: msg.notification?.title ?: return
         val body = d["body"] ?: msg.notification?.body ?: ""
         Notifier.post(applicationContext, Notifier.CH_ALERTS, (title.hashCode() and 0x7fffffff), title, body, d["symbol"], d["tab"])
+        Push.incoming.tryEmit(AlertSplash(title, body, d["symbol"], d["tab"]))
     }
 }

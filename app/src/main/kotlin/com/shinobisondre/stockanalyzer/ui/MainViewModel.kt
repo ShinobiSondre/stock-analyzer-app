@@ -147,6 +147,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val quick = MutableStateFlow(QuickState())
     val shot = MutableStateFlow<ShotImport?>(null)
+    /** An alert being shown full screen (from a notification tap, or one that arrived while the app was open). */
+    val alert = MutableStateFlow<com.shinobisondre.stockanalyzer.push.AlertSplash?>(null)
+    fun showAlert(a: com.shinobisondre.stockanalyzer.push.AlertSplash) { alert.value = a }
+    fun dismissAlert() { alert.value = null }
     /** Today's "quick win" pop-up (shown at most once a day per stock). */
     val splash = MutableStateFlow<List<com.shinobisondre.stockanalyzer.data.QuickWin>?>(null)
     private var quickJob: Job? = null
@@ -174,6 +178,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val listPermits = Semaphore(5)
 
     init {
+        viewModelScope.launch { com.shinobisondre.stockanalyzer.push.Push.incoming.collect { showAlert(it) } }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) { repo.model } // parse model.json off the main thread
         refreshMarket()
         loadWatchlist()

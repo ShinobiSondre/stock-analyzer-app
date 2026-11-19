@@ -124,6 +124,15 @@ fun AppRoot(vm: MainViewModel, fold: FoldInfo) {
         // Short animated intro on a fresh start (not when folding/unfolding or coming back).
         var intro by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
         if (intro) IntroSplash { intro = false }
+        // A stock alert, full screen.
+        val alert by vm.alert.collectAsStateWithLifecycle()
+        androidx.compose.animation.AnimatedVisibility(alert != null,
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.9f),
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.95f)) {
+            val last = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(alert) }
+            if (alert != null) last.value = alert
+            last.value?.let { com.shinobisondre.stockanalyzer.ui.screens.AlertSplashScreen(vm, it) }
+        }
     }
 }
 
