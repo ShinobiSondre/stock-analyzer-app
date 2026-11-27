@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.shinobisondre.stockanalyzer.engine.EngineTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-11-27T19:46:09" hostname="runnervm0hi8g" time="0.514">
+  <properties/>
+  <testcase name="engineSelfTest" classname="com.shinobisondre.stockanalyzer.engine.EngineTest" time="0.514"/>
+  <system-out><![CDATA[EngineSelfTest: 158 checks passed, 0 failed
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

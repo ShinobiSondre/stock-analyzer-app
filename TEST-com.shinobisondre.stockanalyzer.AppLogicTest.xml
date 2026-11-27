@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.shinobisondre.stockanalyzer.AppLogicTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-27T19:48:12" hostname="runnervm0hi8g" time="0.162">
+  <properties/>
+  <testcase name="sentimentUsesWordBoundaries" classname="com.shinobisondre.stockanalyzer.AppLogicTest" time="0.053"/>
+  <testcase name="stateRoundTrips" classname="com.shinobisondre.stockanalyzer.AppLogicTest" time="0.02"/>
+  <testcase name="whyMovingMatchesTickerAsAWord" classname="com.shinobisondre.stockanalyzer.AppLogicTest" time="0.057"/>
+  <testcase name="chartErrorBecomesException" classname="com.shinobisondre.stockanalyzer.AppLogicTest" time="0.009"/>
+  <testcase name="completedCandlesDropsTheFormingBarOnlyWhileTheSessionIsOpen" classname="com.shinobisondre.stockanalyzer.AppLogicTest" time="0.017"/>
+  <testcase name="emptyWatchlistStaysEmpty" classname="com.shinobisondre.stockanalyzer.AppLogicTest" time="0.002"/>
+  <testcase name="parsesChartAndDropsNullBars" classname="com.shinobisondre.stockanalyzer.AppLogicTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
