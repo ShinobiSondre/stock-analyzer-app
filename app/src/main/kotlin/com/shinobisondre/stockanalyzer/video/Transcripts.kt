@@ -24,11 +24,13 @@ object Transcripts {
         missing[videoId]?.let { if (System.currentTimeMillis() - it < 10 * 60_000) return@withContext null }
         val t0 = System.currentTimeMillis()
         val info = WatchPage.info(videoId)
-        if (info == null || info.tracks.isEmpty()) {
+        if (info == null) {
             missing[videoId] = System.currentTimeMillis()
-            if (info == null) Diag.log("subs", "$videoId: page unreadable")
+            Diag.log("subs", "$videoId: page unreadable")
             return@withContext null
         }
+        // No downloadable caption tracks: the website's transcript panel may still have the words.
+        if (info.tracks.isEmpty()) return@withContext fromPanel(videoId, t0)
         val want = target()
         val spoken = WatchPage.spoken(info)
         // Prefer hand-made captions in the app language, then YouTube's automatic ones (= spoken language).
@@ -36,10 +38,20 @@ object Transcripts {
             ?: info.tracks.firstOrNull { it.kind == "asr" }
             ?: info.tracks.first()
         val cues = WatchPage.fetch(videoId, chosen)
-        if (cues.isNullOrEmpty()) { missing[videoId] = System.currentTimeMillis(); return@withContext null }
+        if (cues.isNullOrEmpty()) return@withContext fromPanel(videoId, t0)
         Transcript(chosen.lang, cues, false, spoken).also {
             cache["o|$videoId"] = it
             Diag.log("subs", "$videoId: ${cues.size} caption lines (${chosen.lang}${if (chosen.kind == "asr") ", auto" else ""}), spoken=${spoken.ifBlank { "?" }} in ${(System.currentTimeMillis() - t0) / 1000.0} s")
+        }
+    }
+
+    /** Second way in: YouTube's "Show transcript" panel (no token needed). */
+    private suspend fun fromPanel(videoId: String, t0: Long): Transcript? {
+        val cues = runCatching { WatchPage.panelTranscript(videoId) }.getOrNull()
+        if (cues.isNullOrEmpty()) { missing[videoId] = System.currentTimeMillis(); return null }
+        return Transcript("en", cues, false).also {
+            cache["o|$videoId"] = it
+            Diag.log("subs", "$videoId: ${cues.size} lines from the transcript panel in ${(System.currentTimeMillis() - t0) / 1000.0} s")
         }
     }
 

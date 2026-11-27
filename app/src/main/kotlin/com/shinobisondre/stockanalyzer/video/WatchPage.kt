@@ -20,7 +20,9 @@ import java.util.concurrent.TimeUnit
 object WatchPage {
     /** [plain] = from YouTube's Android-app answer: its caption links download without any token. */
     data class Track(val baseUrl: String, val lang: String, val kind: String, val name: String, val plain: Boolean = false)
-    data class Info(val tracks: List<Track>, val title: String, val description: String, val channelId: String = "", val channel: String = "", val webTracks: List<Track> = emptyList())
+    data class Info(val tracks: List<Track>, val title: String, val description: String, val channelId: String = "", val channel: String = "", val webTracks: List<Track> = emptyList(),
+                    /** For the website's "Show transcript" panel (needs no proof-of-origin token). */
+                    val panelParams: String? = null, val webVersion: String? = null, val visitor: String? = null)
 
     private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     // Keeps YouTube's visitor cookies between the page, player and caption requests (like a browser session).
@@ -92,7 +94,14 @@ object WatchPage {
             "tracks=${tracks.joinToString { it.lang + (if (it.kind == "asr") "*" else "") + (if (it.plain) "" else "(web)") }.ifBlank { "none" }}")
         val vd = android?.optJSONObject("videoDetails") ?: page?.optJSONObject("videoDetails")
         val web = page?.let { tracksOf(it, false) }.orEmpty()
-        Info(tracks, vd?.optString("title").orEmpty(), vd?.optString("shortDescription").orEmpty(), vd?.optString("channelId").orEmpty(), vd?.optString("author").orEmpty(), web)
+        // Some pages embed ytInitialData as an escaped JS string (\x22 = ").
+        val plainHtml = if ("\\x22getTranscriptEndpoint" in html) html.replace("\\x22", "\"").replace("\\x7b", "{").replace("\\x7d", "}") else html
+        val panel = Regex("\"getTranscriptEndpoint\":\\{\"params\":\"([^\"]+)\"").find(plainHtml)?.groupValues?.get(1)
+            ?.replace("\\u003d", "=")?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
+        val webVersion = Regex("\"INNERTUBE_CLIENT_VERSION\":\\s*\"([0-9.]+)\"").find(html)?.groupValues?.get(1)
+        val visitor = Regex("\"VISITOR_DATA\":\\s*\"([^\"]+)\"").find(html)?.groupValues?.get(1)
+        Info(tracks, vd?.optString("title").orEmpty(), vd?.optString("shortDescription").orEmpty(), vd?.optString("channelId").orEmpty(), vd?.optString("author").orEmpty(), web,
+            panel, webVersion, visitor)
             .also { cache[videoId] = it }
     }
 
@@ -158,6 +167,59 @@ object WatchPage {
         Diag.log("page", "$videoId: caption download refused (${track.lang}/${track.kind.ifBlank { "manual" }}${tlang?.let { " → $it" } ?: ""}, token=${pot != null}, xpe=${"exp=xpe" in webTrack.baseUrl}): ${last.take(90).replace("\n", " ")}")
         null
     }
+
+    /**
+     * The transcript panel the YouTube website shows under "Show transcript" (youtubei/v1/get_transcript).
+     * It uses the page's own params and needs no proof-of-origin token, so it still works when the
+     * caption files are locked (exp=xpe) or refused.
+     */
+    suspend fun panelTranscript(videoId: String): List<Cue>? = withContext(Dispatchers.IO) {
+        val info = cache[videoId] ?: info(videoId) ?: return@withContext null
+        val params = info.panelParams ?: run { Diag.log("page", "$videoId: no transcript panel on the page"); return@withContext null }
+        val key = apiKey ?: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        val client = JSONObject().put("clientName", "WEB").put("clientVersion", info.webVersion ?: "2.20261120.01.00").put("hl", "en").put("gl", "US")
+        info.visitor?.let { client.put("visitorData", it) }
+        val body = JSONObject().put("context", JSONObject().put("client", client)).put("params", params)
+        val text = runCatching {
+            http.newCall(
+                Request.Builder().url("https://www.youtube.com/youtubei/v1/get_transcript?key=$key&prettyPrint=false")
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .header("User-Agent", UA).header("Accept-Language", "en-US")
+                    .header("Origin", "https://www.youtube.com").header("Referer", "https://www.youtube.com/watch?v=$videoId")
+                    .header("X-Youtube-Client-Name", "1").header("X-Youtube-Client-Version", info.webVersion ?: "2.20261120.01.00")
+                    .apply { info.visitor?.let { header("X-Goog-Visitor-Id", it) } }
+                    .build()
+            ).execute().use { "${it.code} " + it.body?.string().orEmpty() }
+        }.onFailure { Diag.err("page", "$videoId transcript panel", it) }.getOrNull() ?: return@withContext null
+        val cues = parsePanel(text.substringAfter(' '))
+        if (cues.isEmpty()) Diag.log("page", "$videoId: transcript panel gave nothing (${text.take(120).replace("\n", " ")})")
+        else Diag.log("page", "$videoId: ${cues.size} lines from YouTube's transcript panel")
+        cues.ifEmpty { null }
+    }
+
+    /** Finds every transcriptSegmentRenderer in the answer, wherever YouTube nests it this month. */
+    fun parsePanel(body: String): List<Cue> = runCatching {
+        val out = mutableListOf<Cue>()
+        fun walk(x: Any?) {
+            when (x) {
+                is JSONObject -> {
+                    val seg = x.optJSONObject("transcriptSegmentRenderer")
+                    if (seg != null) {
+                        val start = seg.optString("startMs").toLongOrNull()
+                        val end = seg.optString("endMs").toLongOrNull()
+                        val sn = seg.optJSONObject("snippet")
+                        val t = sn?.optString("simpleText")?.takeIf { it.isNotBlank() }
+                            ?: sn?.optJSONArray("runs")?.let { r -> (0 until r.length()).joinToString("") { r.getJSONObject(it).optString("text") } }.orEmpty()
+                        val text = t.replace("\n", " ").trim()
+                        if (start != null && text.isNotBlank()) out += Cue(start, end ?: (start + 2000), text)
+                    } else x.keys().forEach { walk(x.opt(it)) }
+                }
+                is org.json.JSONArray -> for (i in 0 until x.length()) walk(x.opt(i))
+            }
+        }
+        walk(JSONObject(body))
+        out.sortedBy { it.start }
+    }.getOrDefault(emptyList())
 
     /** Plain GET with this session's YouTube cookies (used for caption links YouTube's own player requested). */
     fun plainGet(url: String): String? = runCatching {
